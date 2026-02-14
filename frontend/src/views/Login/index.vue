@@ -37,7 +37,7 @@
       </form>
       
       <div style="text-align: center; font-size: 12px; color: #909399;">
-        默认管理员: admin / admin123
+        默认管理员: admin / ******
       </div>
     </div>
   </div>
@@ -61,8 +61,11 @@ async function handleLogin() {
   loading.value = true
   
   try {
-    // 模拟登录
-    if (username.value === 'admin' && password.value === 'admin123') {
+    // 管理员登录验证
+    const ADMIN_USERNAME = 'admin'
+    const ADMIN_PASSWORD = 'your-new-password-here'  // 修改这里
+    
+    if (username.value === ADMIN_USERNAME && password.value === ADMIN_PASSWORD) {
       localStorage.setItem('token', 'test-token')
       router.push('/')
     } else {
