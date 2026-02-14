@@ -6,7 +6,7 @@ const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 const supabase = createClient(supabaseUrl, supabaseKey);
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-const WEB_URL = process.env.WEB_URL || 'https://your-admin-panel.com';
+const WEB_URL = process.env.WEB_URL || 'https://tg-group-admin-frontend.vercel.app';
 
 interface TelegramUpdate {
   update_id: number;
