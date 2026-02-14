@@ -57,15 +57,6 @@ CREATE TABLE IF NOT EXISTS group_configs (
     crypto_config JSONB DEFAULT '{"enabled": true, "default_currency": "USDT"}'::jsonb,
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
-    anti_ads_config JSONB DEFAULT '{"enabled": false, "keywords": [], "punishment": "delete", "warn_limit": 3}'::jsonb,
-    auto_reply_config JSONB DEFAULT '{"enabled": false}'::jsonb,
-    auto_delete_config JSONB DEFAULT '{"enabled": false, "rules": []}'::jsonb,
-    anti_spam_config JSONB DEFAULT '{"enabled": false, "max_messages": 5, "time_window": 10, "punishment": "mute", "mute_duration": 300}'::jsonb,
-    points_config JSONB DEFAULT '{"enabled": true, "daily_limit": 100, "per_message": 0.2, "checkin_base": 10, "checkin_bonus": [2, 5, 10, 20]}'::jsonb,
-    commands_config JSONB DEFAULT '{}'::jsonb,
-    crypto_config JSONB DEFAULT '{"enabled": true, "default_currency": "USDT"}'::jsonb,
-    updated_at TIMESTAMPTZ DEFAULT NOW()
-);
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_group_configs_group_id ON group_configs(group_id);
 
