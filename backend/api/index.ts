@@ -7,7 +7,7 @@ const supabase = createClient(supabaseUrl, supabaseKey);
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 
-async function callTelegramApi(method: string, params: Record<string, any>) {
+async function callTelegramApi(method: string, params: Record<string, any>): Promise<{ ok: boolean; result?: any }> {
   const url = `https://api.telegram.org/bot${BOT_TOKEN}/${method}`;
   const response = await fetch(url, {
     method: 'POST',
@@ -17,15 +17,15 @@ async function callTelegramApi(method: string, params: Record<string, any>) {
   return response.json();
 }
 
-async function sendMessage(chatId: number, text: string) {
+async function sendMessage(chatId: number, text: string): Promise<{ ok: boolean }> {
   return callTelegramApi('sendMessage', {
     chat_id: chatId,
     text: text,
     parse_mode: 'HTML'
-  });
+  }) as Promise<{ ok: boolean }>;
 }
 
-type Handler = (req: VercelRequest, res: VercelResponse, params: Record<string, string>) => Promise<void>;
+type Handler = (req: VercelRequest, res: VercelResponse, params: Record<string, string>) => Promise<void | VercelResponse>;
 
 const handlers: Record<string, Handler> = {
   'GET /health': async (req, res) => {
@@ -34,31 +34,46 @@ const handlers: Record<string, Handler> = {
 
   'GET /admin/groups': async (req, res) => {
     const { data, error } = await supabase.from('groups').select('*').eq('is_active', true);
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) {
+      res.status(500).json({ error: error.message });
+      return;
+    }
     res.json({ success: true, data });
   },
 
   'POST /admin/groups': async (req, res) => {
     const { data, error } = await supabase.from('groups').insert(req.body).select();
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) {
+      res.status(500).json({ error: error.message });
+      return;
+    }
     res.json({ success: true, data: data[0] });
   },
 
   'GET /admin/groups/:id': async (req, res, params) => {
     const { data, error } = await supabase.from('groups').select('*').eq('id', params.id).single();
-    if (error) return res.status(404).json({ error: 'Not found' });
+    if (error) {
+      res.status(404).json({ error: 'Not found' });
+      return;
+    }
     res.json({ success: true, data });
   },
 
   'PUT /admin/groups/:id': async (req, res, params) => {
     const { data, error } = await supabase.from('groups').update(req.body).eq('id', params.id).select();
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) {
+      res.status(500).json({ error: error.message });
+      return;
+    }
     res.json({ success: true, data: data[0] });
   },
 
   'DELETE /admin/groups/:id': async (req, res, params) => {
     const { error } = await supabase.from('groups').delete().eq('id', params.id);
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) {
+      res.status(500).json({ error: error.message });
+      return;
+    }
     res.json({ success: true });
   },
 
@@ -79,37 +94,55 @@ const handlers: Record<string, Handler> = {
 
   'GET /admin/permissions': async (req, res) => {
     const { data, error } = await supabase.from('menu_permissions').select('*');
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) {
+      res.status(500).json({ error: error.message });
+      return;
+    }
     res.json({ success: true, data: data || [] });
   },
 
   'POST /admin/permissions': async (req, res) => {
     const { data, error } = await supabase.from('menu_permissions').upsert(req.body).select();
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) {
+      res.status(500).json({ error: error.message });
+      return;
+    }
     res.json({ success: true, data });
   },
 
   'GET /admin/users-search': async (req, res) => {
     const query = req.query.q as string;
-    if (!query) return res.json({ success: true, data: [] });
+    if (!query) {
+      res.json({ success: true, data: [] });
+      return;
+    }
     const { data, error } = await supabase
       .from('users')
       .select('id, telegram_id, username, first_name')
       .or(`username.ilike.%${query}%,first_name.ilike.%${query}%`)
       .limit(20);
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) {
+      res.status(500).json({ error: error.message });
+      return;
+    }
     res.json({ success: true, data: data || [] });
   },
 
   'GET /admin/menu-permissions': async (req, res) => {
     const { data, error } = await supabase.from('menu_permissions').select('*');
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) {
+      res.status(500).json({ error: error.message });
+      return;
+    }
     res.json({ success: true, data: data || [] });
   },
 
   'POST /admin/menu-permissions': async (req, res) => {
     const { data, error } = await supabase.from('menu_permissions').upsert(req.body).select();
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) {
+      res.status(500).json({ error: error.message });
+      return;
+    }
     res.json({ success: true, data });
   },
 
@@ -118,12 +151,14 @@ const handlers: Record<string, Handler> = {
     let query = supabase.from('user_points').select('*, users(*)').order('points', { ascending: false });
     if (groupId) query = query.eq('group_id', groupId);
     const { data, error } = await query.limit(100);
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) {
+      res.status(500).json({ error: error.message });
+      return;
+    }
     res.json({ success: true, data: data || [] });
   },
 
   'POST /admin/points/checkin': async (req, res) => {
-    const { user_id, group_id } = req.body;
     const points = Math.floor(Math.random() * 20) + 10;
     res.json({ success: true, data: { points_added: points } });
   },
@@ -133,13 +168,19 @@ const handlers: Record<string, Handler> = {
     let query = supabase.from('lotteries').select('*').eq('is_active', true);
     if (groupId) query = query.eq('group_id', groupId);
     const { data, error } = await query;
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) {
+      res.status(500).json({ error: error.message });
+      return;
+    }
     res.json({ success: true, data: data || [] });
   },
 
   'POST /admin/lottery': async (req, res) => {
     const { data, error } = await supabase.from('lotteries').insert(req.body).select();
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) {
+      res.status(500).json({ error: error.message });
+      return;
+    }
     res.json({ success: true, data: data[0] });
   },
 
@@ -148,13 +189,19 @@ const handlers: Record<string, Handler> = {
     let query = supabase.from('scheduled_messages').select('*');
     if (groupId) query = query.eq('group_id', groupId);
     const { data, error } = await query;
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) {
+      res.status(500).json({ error: error.message });
+      return;
+    }
     res.json({ success: true, data: data || [] });
   },
 
   'POST /admin/scheduled-messages': async (req, res) => {
     const { data, error } = await supabase.from('scheduled_messages').insert(req.body).select();
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) {
+      res.status(500).json({ error: error.message });
+      return;
+    }
     res.json({ success: true, data: data[0] });
   },
 
@@ -163,13 +210,19 @@ const handlers: Record<string, Handler> = {
     let query = supabase.from('auto_reply_rules').select('*');
     if (groupId) query = query.eq('group_id', groupId);
     const { data, error } = await query;
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) {
+      res.status(500).json({ error: error.message });
+      return;
+    }
     res.json({ success: true, data: data || [] });
   },
 
   'POST /admin/auto-replies': async (req, res) => {
     const { data, error } = await supabase.from('auto_reply_rules').insert(req.body).select();
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) {
+      res.status(500).json({ error: error.message });
+      return;
+    }
     res.json({ success: true, data: data[0] });
   },
 
@@ -178,7 +231,10 @@ const handlers: Record<string, Handler> = {
     let query = supabase.from('invite_stats').select('*, users(*)');
     if (groupId) query = query.eq('group_id', groupId);
     const { data, error } = await query.order('invite_count', { ascending: false }).limit(50);
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) {
+      res.status(500).json({ error: error.message });
+      return;
+    }
     res.json({ success: true, data: data || [] });
   },
 
@@ -190,7 +246,10 @@ const handlers: Record<string, Handler> = {
       .eq('group_id', groupId)
       .order('date', { ascending: false })
       .limit(30);
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) {
+      res.status(500).json({ error: error.message });
+      return;
+    }
     res.json({ success: true, data: data || [] });
   },
 
@@ -199,7 +258,10 @@ const handlers: Record<string, Handler> = {
     let query = supabase.from('verified_users').select('*, users(*)');
     if (groupId) query = query.eq('group_id', groupId);
     const { data, error } = await query;
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) {
+      res.status(500).json({ error: error.message });
+      return;
+    }
     res.json({ success: true, data: data || [] });
   },
 
@@ -241,7 +303,10 @@ const handlers: Record<string, Handler> = {
   'GET /admin/config': async (req, res) => {
     const groupId = req.query.group_id as string;
     const { data, error } = await supabase.from('group_configs').select('*').eq('group_id', groupId).single();
-    if (error) return res.status(404).json({ error: 'Config not found' });
+    if (error) {
+      res.status(404).json({ error: 'Config not found' });
+      return;
+    }
     res.json({ success: true, data });
   },
 
@@ -251,14 +316,20 @@ const handlers: Record<string, Handler> = {
       .from('group_configs')
       .upsert({ group_id, ...config })
       .select();
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) {
+      res.status(500).json({ error: error.message });
+      return;
+    }
     res.json({ success: true, data: data[0] });
   },
 
   'GET /admin/anti-ads': async (req, res) => {
     const groupId = req.query.group_id as string;
     const { data, error } = await supabase.from('group_configs').select('anti_ads_config').eq('group_id', groupId).single();
-    if (error) return res.status(404).json({ error: 'Not found' });
+    if (error) {
+      res.status(404).json({ error: 'Not found' });
+      return;
+    }
     res.json({ success: true, data: data?.anti_ads_config || {} });
   },
 
@@ -269,14 +340,20 @@ const handlers: Record<string, Handler> = {
       .update({ anti_ads_config: config })
       .eq('group_id', group_id)
       .select();
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) {
+      res.status(500).json({ error: error.message });
+      return;
+    }
     res.json({ success: true, data: data[0] });
   },
 
   'GET /admin/anti-spam': async (req, res) => {
     const groupId = req.query.group_id as string;
     const { data, error } = await supabase.from('group_configs').select('anti_spam_config').eq('group_id', groupId).single();
-    if (error) return res.status(404).json({ error: 'Not found' });
+    if (error) {
+      res.status(404).json({ error: 'Not found' });
+      return;
+    }
     res.json({ success: true, data: data?.anti_spam_config || {} });
   },
 
@@ -287,14 +364,20 @@ const handlers: Record<string, Handler> = {
       .update({ anti_spam_config: config })
       .eq('group_id', group_id)
       .select();
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) {
+      res.status(500).json({ error: error.message });
+      return;
+    }
     res.json({ success: true, data: data[0] });
   },
 
   'GET /admin/verification': async (req, res) => {
     const groupId = req.query.group_id as string;
     const { data, error } = await supabase.from('group_configs').select('verification_config').eq('group_id', groupId).single();
-    if (error) return res.status(404).json({ error: 'Not found' });
+    if (error) {
+      res.status(404).json({ error: 'Not found' });
+      return;
+    }
     res.json({ success: true, data: data?.verification_config || {} });
   },
 
@@ -305,14 +388,20 @@ const handlers: Record<string, Handler> = {
       .update({ verification_config: config })
       .eq('group_id', group_id)
       .select();
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) {
+      res.status(500).json({ error: error.message });
+      return;
+    }
     res.json({ success: true, data: data[0] });
   },
 
   'GET /admin/auto-delete': async (req, res) => {
     const groupId = req.query.group_id as string;
     const { data, error } = await supabase.from('group_configs').select('auto_delete_config').eq('group_id', groupId).single();
-    if (error) return res.status(404).json({ error: 'Not found' });
+    if (error) {
+      res.status(404).json({ error: 'Not found' });
+      return;
+    }
     res.json({ success: true, data: data?.auto_delete_config || {} });
   },
 
@@ -323,60 +412,87 @@ const handlers: Record<string, Handler> = {
       .update({ auto_delete_config: config })
       .eq('group_id', group_id)
       .select();
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) {
+      res.status(500).json({ error: error.message });
+      return;
+    }
     res.json({ success: true, data: data[0] });
   },
 
   'GET /admin/auto-ban': async (req, res) => {
     const groupId = req.query.group_id as string;
     const { data, error } = await supabase.from('auto_ban_rules').select('*').eq('group_id', groupId);
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) {
+      res.status(500).json({ error: error.message });
+      return;
+    }
     res.json({ success: true, data: data || [] });
   },
 
   'POST /admin/auto-ban': async (req, res) => {
     const { data, error } = await supabase.from('auto_ban_rules').insert(req.body).select();
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) {
+      res.status(500).json({ error: error.message });
+      return;
+    }
     res.json({ success: true, data: data[0] });
   },
 
   'GET /admin/channel-forwards': async (req, res) => {
     const groupId = req.query.group_id as string;
     const { data, error } = await supabase.from('channel_forwards').select('*').eq('group_id', groupId);
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) {
+      res.status(500).json({ error: error.message });
+      return;
+    }
     res.json({ success: true, data: data || [] });
   },
 
   'POST /admin/channel-forwards': async (req, res) => {
     const { data, error } = await supabase.from('channel_forwards').insert(req.body).select();
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) {
+      res.status(500).json({ error: error.message });
+      return;
+    }
     res.json({ success: true, data: data[0] });
   },
 
   'GET /admin/channel-settings': async (req, res) => {
     const groupId = req.query.group_id as string;
     const { data, error } = await supabase.from('channel_settings').select('*').eq('group_id', groupId);
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) {
+      res.status(500).json({ error: error.message });
+      return;
+    }
     res.json({ success: true, data: data || [] });
   },
 
   'POST /admin/channel-settings': async (req, res) => {
     const { data, error } = await supabase.from('channel_settings').insert(req.body).select();
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) {
+      res.status(500).json({ error: error.message });
+      return;
+    }
     res.json({ success: true, data: data[0] });
   },
 
   'GET /admin/group-members': async (req, res) => {
     const groupId = req.query.group_id as string;
     const { data, error } = await supabase.from('group_members').select('*, users(*)').eq('group_id', groupId);
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) {
+      res.status(500).json({ error: error.message });
+      return;
+    }
     res.json({ success: true, data: data || [] });
   },
 
   'GET /admin/commands': async (req, res) => {
     const groupId = req.query.group_id as string;
     const { data, error } = await supabase.from('group_configs').select('commands_config').eq('group_id', groupId).single();
-    if (error) return res.status(404).json({ error: 'Not found' });
+    if (error) {
+      res.status(404).json({ error: 'Not found' });
+      return;
+    }
     res.json({ success: true, data: data?.commands_config || {} });
   },
 
@@ -387,20 +503,29 @@ const handlers: Record<string, Handler> = {
       .update({ commands_config: config })
       .eq('group_id', group_id)
       .select();
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) {
+      res.status(500).json({ error: error.message });
+      return;
+    }
     res.json({ success: true, data: data[0] });
   },
 
   'GET /admin/porn-detection': async (req, res) => {
     const groupId = req.query.group_id as string;
     const { data, error } = await supabase.from('porn_detection_settings').select('*').eq('group_id', groupId).single();
-    if (error) return res.status(404).json({ error: 'Not found' });
+    if (error) {
+      res.status(404).json({ error: 'Not found' });
+      return;
+    }
     res.json({ success: true, data: data || {} });
   },
 
   'POST /admin/porn-detection': async (req, res) => {
     const { data, error } = await supabase.from('porn_detection_settings').upsert(req.body).select();
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) {
+      res.status(500).json({ error: error.message });
+      return;
+    }
     res.json({ success: true, data: data[0] });
   },
 
@@ -410,17 +535,20 @@ const handlers: Record<string, Handler> = {
 
   'POST /admin/super-tools/broadcast': async (req, res) => {
     const { message, group_ids } = req.body;
-    let success = 0;
+    let successCount = 0;
     for (const chatId of group_ids || []) {
       const result = await sendMessage(chatId, message);
-      if (result.ok) success++;
+      if (result.ok) successCount++;
     }
-    res.json({ success: true, data: { sent: success, total: group_ids?.length || 0 } });
+    res.json({ success: true, data: { sent: successCount, total: group_ids?.length || 0 } });
   },
 
   'GET /admin/memberships': async (req, res) => {
     const { data, error } = await supabase.from('group_administrators').select('*, groups(*), users(*)');
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) {
+      res.status(500).json({ error: error.message });
+      return;
+    }
     res.json({ success: true, data: data || [] });
   },
 
@@ -479,7 +607,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 
   if (req.method === 'OPTIONS') {
-    return res.status(200).end();
+    res.status(200).end();
+    return;
   }
 
   const url = req.url || '/';
@@ -489,7 +618,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const matched = matchRoute(req.method || 'GET', path);
 
   if (!matched) {
-    return res.status(404).json({ error: 'Not found', path, method: req.method });
+    res.status(404).json({ error: 'Not found', path, method: req.method });
+    return;
   }
 
   try {
