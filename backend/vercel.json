@@ -10,6 +10,16 @@
       "maxDuration": 30
     }
   },
+  "rewrites": [
+    {
+      "source": "/api/telegram/webhook",
+      "destination": "/api/telegram/webhook"
+    },
+    {
+      "source": "/api/(.*)",
+      "destination": "/api/index"
+    }
+  ],
   "headers": [
     {
       "source": "/api/(.*)",
@@ -19,8 +29,5 @@
         { "key": "Access-Control-Allow-Headers", "value": "Content-Type, Authorization" }
       ]
     }
-  ],
-  "rewrites": [
-    { "source": "/api/telegram/webhook", "destination": "/api/telegram/webhook" }
   ]
 }

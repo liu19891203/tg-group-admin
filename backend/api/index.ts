@@ -1,0 +1,501 @@
+import { VercelRequest, VercelResponse } from '@vercel/node';
+import { createClient } from '@supabase/supabase-js';
+
+const supabaseUrl = process.env.SUPABASE_URL!;
+const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+const supabase = createClient(supabaseUrl, supabaseKey);
+
+const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+
+async function callTelegramApi(method: string, params: Record<string, any>) {
+  const url = `https://api.telegram.org/bot${BOT_TOKEN}/${method}`;
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params)
+  });
+  return response.json();
+}
+
+async function sendMessage(chatId: number, text: string) {
+  return callTelegramApi('sendMessage', {
+    chat_id: chatId,
+    text: text,
+    parse_mode: 'HTML'
+  });
+}
+
+type Handler = (req: VercelRequest, res: VercelResponse, params: Record<string, string>) => Promise<void>;
+
+const handlers: Record<string, Handler> = {
+  'GET /health': async (req, res) => {
+    res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  },
+
+  'GET /admin/groups': async (req, res) => {
+    const { data, error } = await supabase.from('groups').select('*').eq('is_active', true);
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ success: true, data });
+  },
+
+  'POST /admin/groups': async (req, res) => {
+    const { data, error } = await supabase.from('groups').insert(req.body).select();
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ success: true, data: data[0] });
+  },
+
+  'GET /admin/groups/:id': async (req, res, params) => {
+    const { data, error } = await supabase.from('groups').select('*').eq('id', params.id).single();
+    if (error) return res.status(404).json({ error: 'Not found' });
+    res.json({ success: true, data });
+  },
+
+  'PUT /admin/groups/:id': async (req, res, params) => {
+    const { data, error } = await supabase.from('groups').update(req.body).eq('id', params.id).select();
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ success: true, data: data[0] });
+  },
+
+  'DELETE /admin/groups/:id': async (req, res, params) => {
+    const { error } = await supabase.from('groups').delete().eq('id', params.id);
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ success: true });
+  },
+
+  'GET /admin/dashboard': async (req, res) => {
+    const [groups, users] = await Promise.all([
+      supabase.from('groups').select('id', { count: 'exact' }).eq('is_active', true),
+      supabase.from('users').select('id', { count: 'exact' })
+    ]);
+    res.json({
+      success: true,
+      data: {
+        totalGroups: groups.count || 0,
+        totalUsers: users.count || 0,
+        totalMessages: 0
+      }
+    });
+  },
+
+  'GET /admin/permissions': async (req, res) => {
+    const { data, error } = await supabase.from('menu_permissions').select('*');
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ success: true, data: data || [] });
+  },
+
+  'POST /admin/permissions': async (req, res) => {
+    const { data, error } = await supabase.from('menu_permissions').upsert(req.body).select();
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ success: true, data });
+  },
+
+  'GET /admin/users-search': async (req, res) => {
+    const query = req.query.q as string;
+    if (!query) return res.json({ success: true, data: [] });
+    const { data, error } = await supabase
+      .from('users')
+      .select('id, telegram_id, username, first_name')
+      .or(`username.ilike.%${query}%,first_name.ilike.%${query}%`)
+      .limit(20);
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ success: true, data: data || [] });
+  },
+
+  'GET /admin/menu-permissions': async (req, res) => {
+    const { data, error } = await supabase.from('menu_permissions').select('*');
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ success: true, data: data || [] });
+  },
+
+  'POST /admin/menu-permissions': async (req, res) => {
+    const { data, error } = await supabase.from('menu_permissions').upsert(req.body).select();
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ success: true, data });
+  },
+
+  'GET /admin/points': async (req, res) => {
+    const groupId = req.query.group_id as string;
+    let query = supabase.from('user_points').select('*, users(*)').order('points', { ascending: false });
+    if (groupId) query = query.eq('group_id', groupId);
+    const { data, error } = await query.limit(100);
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ success: true, data: data || [] });
+  },
+
+  'POST /admin/points/checkin': async (req, res) => {
+    const { user_id, group_id } = req.body;
+    const points = Math.floor(Math.random() * 20) + 10;
+    res.json({ success: true, data: { points_added: points } });
+  },
+
+  'GET /admin/lottery': async (req, res) => {
+    const groupId = req.query.group_id as string;
+    let query = supabase.from('lotteries').select('*').eq('is_active', true);
+    if (groupId) query = query.eq('group_id', groupId);
+    const { data, error } = await query;
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ success: true, data: data || [] });
+  },
+
+  'POST /admin/lottery': async (req, res) => {
+    const { data, error } = await supabase.from('lotteries').insert(req.body).select();
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ success: true, data: data[0] });
+  },
+
+  'GET /admin/scheduled-messages': async (req, res) => {
+    const groupId = req.query.group_id as string;
+    let query = supabase.from('scheduled_messages').select('*');
+    if (groupId) query = query.eq('group_id', groupId);
+    const { data, error } = await query;
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ success: true, data: data || [] });
+  },
+
+  'POST /admin/scheduled-messages': async (req, res) => {
+    const { data, error } = await supabase.from('scheduled_messages').insert(req.body).select();
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ success: true, data: data[0] });
+  },
+
+  'GET /admin/auto-replies': async (req, res) => {
+    const groupId = req.query.group_id as string;
+    let query = supabase.from('auto_reply_rules').select('*');
+    if (groupId) query = query.eq('group_id', groupId);
+    const { data, error } = await query;
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ success: true, data: data || [] });
+  },
+
+  'POST /admin/auto-replies': async (req, res) => {
+    const { data, error } = await supabase.from('auto_reply_rules').insert(req.body).select();
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ success: true, data: data[0] });
+  },
+
+  'GET /admin/invite-stats': async (req, res) => {
+    const groupId = req.query.group_id as string;
+    let query = supabase.from('invite_stats').select('*, users(*)');
+    if (groupId) query = query.eq('group_id', groupId);
+    const { data, error } = await query.order('invite_count', { ascending: false }).limit(50);
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ success: true, data: data || [] });
+  },
+
+  'GET /admin/chat-stats': async (req, res) => {
+    const groupId = req.query.group_id as string;
+    const { data, error } = await supabase
+      .from('chat_stats')
+      .select('*')
+      .eq('group_id', groupId)
+      .order('date', { ascending: false })
+      .limit(30);
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ success: true, data: data || [] });
+  },
+
+  'GET /admin/verified-users': async (req, res) => {
+    const groupId = req.query.group_id as string;
+    let query = supabase.from('verified_users').select('*, users(*)');
+    if (groupId) query = query.eq('group_id', groupId);
+    const { data, error } = await query;
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ success: true, data: data || [] });
+  },
+
+  'POST /admin/send-message': async (req, res) => {
+    const { chat_id, text } = req.body;
+    const result = await sendMessage(chat_id, text);
+    res.json({ success: result.ok, data: result });
+  },
+
+  'GET /admin/crypto-rates': async (req, res) => {
+    res.json({
+      success: true,
+      data: {
+        usdt_cny: 7.24,
+        exchanges: [
+          { name: 'Binance', rate: 7.23, change: '+0.12%' },
+          { name: 'OKX', rate: 7.25, change: '+0.08%' },
+          { name: 'Huobi', rate: 7.22, change: '-0.05%' }
+        ],
+        updated_at: new Date().toISOString()
+      }
+    });
+  },
+
+  'POST /admin/crypto-query': async (req, res) => {
+    const { address } = req.body;
+    res.json({
+      success: true,
+      data: {
+        address,
+        network: 'TRC20',
+        balance: '0.00',
+        value_usd: '0.00',
+        transactions: []
+      }
+    });
+  },
+
+  'GET /admin/config': async (req, res) => {
+    const groupId = req.query.group_id as string;
+    const { data, error } = await supabase.from('group_configs').select('*').eq('group_id', groupId).single();
+    if (error) return res.status(404).json({ error: 'Config not found' });
+    res.json({ success: true, data });
+  },
+
+  'PUT /admin/config': async (req, res) => {
+    const { group_id, ...config } = req.body;
+    const { data, error } = await supabase
+      .from('group_configs')
+      .upsert({ group_id, ...config })
+      .select();
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ success: true, data: data[0] });
+  },
+
+  'GET /admin/anti-ads': async (req, res) => {
+    const groupId = req.query.group_id as string;
+    const { data, error } = await supabase.from('group_configs').select('anti_ads_config').eq('group_id', groupId).single();
+    if (error) return res.status(404).json({ error: 'Not found' });
+    res.json({ success: true, data: data?.anti_ads_config || {} });
+  },
+
+  'POST /admin/anti-ads': async (req, res) => {
+    const { group_id, config } = req.body;
+    const { data, error } = await supabase
+      .from('group_configs')
+      .update({ anti_ads_config: config })
+      .eq('group_id', group_id)
+      .select();
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ success: true, data: data[0] });
+  },
+
+  'GET /admin/anti-spam': async (req, res) => {
+    const groupId = req.query.group_id as string;
+    const { data, error } = await supabase.from('group_configs').select('anti_spam_config').eq('group_id', groupId).single();
+    if (error) return res.status(404).json({ error: 'Not found' });
+    res.json({ success: true, data: data?.anti_spam_config || {} });
+  },
+
+  'POST /admin/anti-spam': async (req, res) => {
+    const { group_id, config } = req.body;
+    const { data, error } = await supabase
+      .from('group_configs')
+      .update({ anti_spam_config: config })
+      .eq('group_id', group_id)
+      .select();
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ success: true, data: data[0] });
+  },
+
+  'GET /admin/verification': async (req, res) => {
+    const groupId = req.query.group_id as string;
+    const { data, error } = await supabase.from('group_configs').select('verification_config').eq('group_id', groupId).single();
+    if (error) return res.status(404).json({ error: 'Not found' });
+    res.json({ success: true, data: data?.verification_config || {} });
+  },
+
+  'POST /admin/verification': async (req, res) => {
+    const { group_id, config } = req.body;
+    const { data, error } = await supabase
+      .from('group_configs')
+      .update({ verification_config: config })
+      .eq('group_id', group_id)
+      .select();
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ success: true, data: data[0] });
+  },
+
+  'GET /admin/auto-delete': async (req, res) => {
+    const groupId = req.query.group_id as string;
+    const { data, error } = await supabase.from('group_configs').select('auto_delete_config').eq('group_id', groupId).single();
+    if (error) return res.status(404).json({ error: 'Not found' });
+    res.json({ success: true, data: data?.auto_delete_config || {} });
+  },
+
+  'POST /admin/auto-delete': async (req, res) => {
+    const { group_id, config } = req.body;
+    const { data, error } = await supabase
+      .from('group_configs')
+      .update({ auto_delete_config: config })
+      .eq('group_id', group_id)
+      .select();
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ success: true, data: data[0] });
+  },
+
+  'GET /admin/auto-ban': async (req, res) => {
+    const groupId = req.query.group_id as string;
+    const { data, error } = await supabase.from('auto_ban_rules').select('*').eq('group_id', groupId);
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ success: true, data: data || [] });
+  },
+
+  'POST /admin/auto-ban': async (req, res) => {
+    const { data, error } = await supabase.from('auto_ban_rules').insert(req.body).select();
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ success: true, data: data[0] });
+  },
+
+  'GET /admin/channel-forwards': async (req, res) => {
+    const groupId = req.query.group_id as string;
+    const { data, error } = await supabase.from('channel_forwards').select('*').eq('group_id', groupId);
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ success: true, data: data || [] });
+  },
+
+  'POST /admin/channel-forwards': async (req, res) => {
+    const { data, error } = await supabase.from('channel_forwards').insert(req.body).select();
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ success: true, data: data[0] });
+  },
+
+  'GET /admin/channel-settings': async (req, res) => {
+    const groupId = req.query.group_id as string;
+    const { data, error } = await supabase.from('channel_settings').select('*').eq('group_id', groupId);
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ success: true, data: data || [] });
+  },
+
+  'POST /admin/channel-settings': async (req, res) => {
+    const { data, error } = await supabase.from('channel_settings').insert(req.body).select();
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ success: true, data: data[0] });
+  },
+
+  'GET /admin/group-members': async (req, res) => {
+    const groupId = req.query.group_id as string;
+    const { data, error } = await supabase.from('group_members').select('*, users(*)').eq('group_id', groupId);
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ success: true, data: data || [] });
+  },
+
+  'GET /admin/commands': async (req, res) => {
+    const groupId = req.query.group_id as string;
+    const { data, error } = await supabase.from('group_configs').select('commands_config').eq('group_id', groupId).single();
+    if (error) return res.status(404).json({ error: 'Not found' });
+    res.json({ success: true, data: data?.commands_config || {} });
+  },
+
+  'POST /admin/commands': async (req, res) => {
+    const { group_id, config } = req.body;
+    const { data, error } = await supabase
+      .from('group_configs')
+      .update({ commands_config: config })
+      .eq('group_id', group_id)
+      .select();
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ success: true, data: data[0] });
+  },
+
+  'GET /admin/porn-detection': async (req, res) => {
+    const groupId = req.query.group_id as string;
+    const { data, error } = await supabase.from('porn_detection_settings').select('*').eq('group_id', groupId).single();
+    if (error) return res.status(404).json({ error: 'Not found' });
+    res.json({ success: true, data: data || {} });
+  },
+
+  'POST /admin/porn-detection': async (req, res) => {
+    const { data, error } = await supabase.from('porn_detection_settings').upsert(req.body).select();
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ success: true, data: data[0] });
+  },
+
+  'GET /admin/super-tools': async (req, res) => {
+    res.json({ success: true, data: [] });
+  },
+
+  'POST /admin/super-tools/broadcast': async (req, res) => {
+    const { message, group_ids } = req.body;
+    let success = 0;
+    for (const chatId of group_ids || []) {
+      const result = await sendMessage(chatId, message);
+      if (result.ok) success++;
+    }
+    res.json({ success: true, data: { sent: success, total: group_ids?.length || 0 } });
+  },
+
+  'GET /admin/memberships': async (req, res) => {
+    const { data, error } = await supabase.from('group_administrators').select('*, groups(*), users(*)');
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ success: true, data: data || [] });
+  },
+
+  'GET /admin/settings': async (req, res) => {
+    res.json({ success: true, data: { theme: 'light', language: 'zh-CN' } });
+  },
+
+  'POST /admin/settings': async (req, res) => {
+    res.json({ success: true, data: req.body });
+  },
+
+  'GET /admin/login': async (req, res) => {
+    res.json({ success: true, data: { token: 'mock-token', user: { id: 1, username: 'admin' } } });
+  },
+
+  'GET /admin/auth/me': async (req, res) => {
+    res.json({ success: true, data: { id: 1, username: 'admin', role: 'super_admin' } });
+  }
+};
+
+function matchRoute(method: string, path: string): { handler: Handler; params: Record<string, string> } | null {
+  const routes = Object.keys(handlers);
+  
+  for (const route of routes) {
+    const [routeMethod, routePath] = route.split(' ');
+    if (routeMethod !== method) continue;
+    
+    const routeParts = routePath.split('/');
+    const pathParts = path.split('/');
+    
+    if (routeParts.length !== pathParts.length) continue;
+    
+    const params: Record<string, string> = {};
+    let match = true;
+    
+    for (let i = 0; i < routeParts.length; i++) {
+      if (routeParts[i].startsWith(':')) {
+        params[routeParts[i].slice(1)] = pathParts[i];
+      } else if (routeParts[i] !== pathParts[i]) {
+        match = false;
+        break;
+      }
+    }
+    
+    if (match) {
+      return { handler: handlers[route], params };
+    }
+  }
+  
+  return null;
+}
+
+export default async function handler(req: VercelRequest, res: VercelResponse) {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+
+  const url = req.url || '/';
+  const urlObj = new URL(url, 'http://localhost');
+  const path = urlObj.pathname.replace(/^\/api/, '') || '/';
+
+  const matched = matchRoute(req.method || 'GET', path);
+
+  if (!matched) {
+    return res.status(404).json({ error: 'Not found', path, method: req.method });
+  }
+
+  try {
+    await matched.handler(req, res, matched.params);
+  } catch (error: any) {
+    console.error('Handler error:', error);
+    res.status(500).json({ error: error.message || 'Internal server error' });
+  }
+}
