@@ -104,7 +104,7 @@ async function handleBotAddedToGroup(update: TelegramUpdate) {
   }
 }
 
-async function handleCommand(chatId: number, userId: number | undefined, username: string, text: string) {
+async function handleCommand(chatId: number, userId: number | undefined, username: string, text: string): Promise<boolean> {
   const command = text.split(' ')[0].toLowerCase();
 
   const commands: Record<string, string> = {
@@ -117,8 +117,13 @@ async function handleCommand(chatId: number, userId: number | undefined, usernam
     '/config': `⚙️ <b>群组配置</b>\n\n请访问管理后台：\n${WEB_URL}`
   };
 
-  const response = commands[command] || `❓ 未知命令: ${command}\n\n请使用 /help 查看可用命令。`;
-  await sendMessage(chatId, response);
+  const response = commands[command];
+  if (response) {
+    await sendMessage(chatId, response);
+    return true;
+  }
+  // 未知命令不回复
+  return false;
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
