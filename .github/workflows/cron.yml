@@ -1,0 +1,77 @@
+name: Telegram Group Manager - Scheduled Tasks
+
+on:
+  schedule:
+    - cron: '0 * * * *'  # Every hour
+    - cron: '0 0 * * *'   # Daily at midnight
+  workflow_dispatch:
+    inputs:
+      cron_type:
+        description: 'Cron type to run'
+        required: true
+        default: 'scheduled-messages'
+        type: choice
+        options:
+          - scheduled-messages
+          - daily-stats
+
+jobs:
+  scheduled-messages:
+    if: github.event.schedule == '0 * * * *' || github.event.inputs.cron_type == 'scheduled-messages'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: ./backend
+
+      - name: Run scheduled messages
+        run: |
+          curl -X POST "${{ secrets.VERCEL_API_URL }}/api/cron/scheduled-messages" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}"
+
+  daily-stats:
+    if: github.event.schedule == '0 0 * * *' || github.event.inputs.cron_type == 'daily-stats'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: ./backend
+
+      - name: Run daily stats
+        run: |
+          curl -X POST "${{ secrets.VERCEL_API_URL }}/api/cron/daily-stats" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}"
+
+  deploy-backend:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Deploy to Vercel
+        uses: amondnet/vercel-action@v25
+        with:
+          vercel-token: ${{ secrets.VERCEL_TOKEN }}
+          vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
+          vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
+          vercel-args: '--prod'
+          working-directory: ./backend

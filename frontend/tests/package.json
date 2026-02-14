@@ -1,0 +1,31 @@
+{
+  "name": "telegram-group-manager-frontend-tests",
+  "version": "1.0.0",
+  "description": "Comprehensive test suite for Telegram Group Manager frontend",
+  "main": "run-tests.js",
+  "scripts": {
+    "test": "node tests/run-tests.js",
+    "test:views": "node tests/run-tests.js --views",
+    "test:stores": "node tests/run-tests.js --stores",
+    "test:api": "node tests/run-tests.js --api",
+    "test:verbose": "node tests/run-tests.js --verbose",
+    "test:coverage": "node tests/run-tests.js --coverage",
+    "test:watch": "node tests/run-tests.js --watch",
+    "test:grep": "node tests/run-tests.js --grep",
+    "test:file": "node tests/run-tests.js --test",
+    "test:login": "node tests/run-tests.js --test views/login.test.ts",
+    "test:dashboard": "node tests/run-tests.js --test views/dashboard.test.ts",
+    "test:api-main": "node tests/run-tests.js --test api/index.test.ts",
+    "test:stores-main": "node tests/run-tests.js --test stores/index.test.ts"
+  },
+  "keywords": [
+    "telegram",
+    "vue3",
+    "testing",
+    "vitest"
+  ],
+  "author": "Telegram Group Manager",
+  "license": "MIT",
+  "dependencies": {},
+  "devDependencies": {}
+}

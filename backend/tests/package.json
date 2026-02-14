@@ -1,0 +1,37 @@
+{
+  "name": "telegram-group-manager-tests",
+  "version": "1.0.0",
+  "description": "Comprehensive test suite for Telegram Group Manager backend",
+  "main": "run-tests.js",
+  "scripts": {
+    "test": "node run-tests.js",
+    "test:services": "node run-tests.js --services",
+    "test:api": "node run-tests.js --api",
+    "test:verbose": "node run-tests.js --verbose",
+    "test:coverage": "node run-tests.js --coverage",
+    "test:watch": "node run-tests.js --watch",
+    "test:grep": "node run-tests.js --grep",
+    "test:file": "node run-tests.js --test",
+    "test:verify": "node run-tests.js --test services/verificationService.test.ts",
+    "test:ad": "node run-tests.js --test services/adFilterService.test.ts",
+    "test:reply": "node run-tests.js --test services/autoReplyService.test.ts",
+    "test:points": "node run-tests.js --test services/pointsService.test.ts",
+    "test:lottery": "node run-tests.js --test services/lotteryService.test.ts",
+    "test:message": "node run-tests.js --test services/messageStats.test.ts",
+    "test:scheduled": "node run-tests.js --test services/scheduledMessages.test.ts",
+    "test:crypto": "node run-tests.js --test services/cryptoService.test.ts",
+    "test:api-groups": "node run-tests.js --test api/groups.test.ts",
+    "test:api-stats": "node run-tests.js --test api/stats.test.ts",
+    "test:api-lottery": "node run-tests.js --test api/lottery.test.ts"
+  },
+  "keywords": [
+    "telegram",
+    "bot",
+    "testing",
+    "vitest"
+  ],
+  "author": "Telegram Group Manager",
+  "license": "MIT",
+  "dependencies": {},
+  "devDependencies": {}
+}
