@@ -14,7 +14,8 @@ async function callTelegramApi(method: string, params: Record<string, any>): Pro
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(params)
   });
-  return response.json();
+  const data = await response.json();
+  return data as { ok: boolean; result?: any };
 }
 
 async function sendMessage(chatId: number, text: string): Promise<{ ok: boolean }> {
