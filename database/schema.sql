@@ -58,91 +58,70 @@ CREATE TABLE IF NOT EXISTS group_configs (
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_group_configs_group_id ON group_configs(group_id);
+CREATE INDEX IF NOT EXISTS idx_group_configs_group ON group_configs(group_id);
+
+-- Group administrators table
+CREATE TABLE IF NOT EXISTS group_administrators (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    group_id UUID NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    is_owner BOOLEAN DEFAULT false,
+    is_active BOOLEAN DEFAULT true,
+    permissions JSONB DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    CONSTRAINT unique_group_admin UNIQUE (group_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_group_admins_group ON group_administrators(group_id);
+CREATE INDEX IF NOT EXISTS idx_group_admins_user ON group_administrators(user_id);
+
+-- Group members table
+CREATE TABLE IF NOT EXISTS group_members (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    group_id UUID NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    is_active BOOLEAN DEFAULT true,
+    joined_at TIMESTAMPTZ DEFAULT NOW(),
+    left_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    CONSTRAINT unique_group_member UNIQUE (group_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_group_members_group ON group_members(group_id);
+CREATE INDEX IF NOT EXISTS idx_group_members_user ON group_members(user_id);
 
 -- User points table
 CREATE TABLE IF NOT EXISTS user_points (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    group_id UUID NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+    group_id UUID REFERENCES groups(id) ON DELETE CASCADE,
     points INTEGER DEFAULT 0,
     total_points INTEGER DEFAULT 0,
-    checkin_count INTEGER DEFAULT 0,
-    checkin_streak INTEGER DEFAULT 0,
     last_checkin_at TIMESTAMPTZ,
-    last_activity_at TIMESTAMPTZ,
+    checkin_streak INTEGER DEFAULT 0,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW(),
     CONSTRAINT unique_user_group_points UNIQUE (user_id, group_id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_user_points_group ON user_points(group_id, points DESC);
+CREATE INDEX IF NOT EXISTS idx_user_points_group ON user_points(group_id);
 CREATE INDEX IF NOT EXISTS idx_user_points_user ON user_points(user_id);
-CREATE INDEX IF NOT EXISTS idx_user_points_streak ON user_points(checkin_streak DESC) WHERE checkin_streak > 0;
+CREATE INDEX IF NOT EXISTS idx_user_points_rank ON user_points(group_id, points DESC);
 
--- Points logs table
-CREATE TABLE IF NOT EXISTS points_logs (
+-- Point history table
+CREATE TABLE IF NOT EXISTS point_history (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL REFERENCES users(id),
-    group_id UUID NOT NULL REFERENCES groups(id),
-    change_type VARCHAR(50) NOT NULL,
-    change_amount INTEGER NOT NULL,
-    before_points INTEGER NOT NULL,
-    after_points INTEGER NOT NULL,
-    reason VARCHAR(500),
-    related_id UUID,
-    created_by UUID,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    group_id UUID REFERENCES groups(id) ON DELETE CASCADE,
+    points_change INTEGER NOT NULL,
+    reason VARCHAR(100) NOT NULL,
+    description TEXT,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_points_logs_user ON points_logs(user_id, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_points_logs_group ON points_logs(group_id, created_at DESC);
-
--- Auto reply rules table
-CREATE TABLE IF NOT EXISTS auto_reply_rules (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    group_id UUID NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
-    keyword VARCHAR(500) NOT NULL,
-    is_regex BOOLEAN DEFAULT false,
-    match_mode VARCHAR(20) DEFAULT 'contains',
-    weight INTEGER DEFAULT 1,
-    response_type VARCHAR(20) NOT NULL,
-    response_content JSONB NOT NULL,
-    require_username BOOLEAN DEFAULT false,
-    delete_trigger BOOLEAN DEFAULT false,
-    delete_delay INTEGER DEFAULT 0,
-    cooldown INTEGER DEFAULT 0,
-    is_enabled BOOLEAN DEFAULT true,
-    created_by UUID,
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    used_count INTEGER DEFAULT 0
-);
-
-CREATE INDEX IF NOT EXISTS idx_auto_reply_group ON auto_reply_rules(group_id, is_enabled);
-
--- Scheduled messages table
-CREATE TABLE IF NOT EXISTS scheduled_messages (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    group_id UUID NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
-    channel_id BIGINT,
-    title VARCHAR(255),
-    message_content JSONB NOT NULL,
-    schedule_type VARCHAR(20) NOT NULL,
-    cron_expr VARCHAR(100),
-    interval_minutes INTEGER,
-    start_at TIMESTAMPTZ,
-    end_at TIMESTAMPTZ,
-    is_enabled BOOLEAN DEFAULT true,
-    last_sent_at TIMESTAMPTZ,
-    next_send_at TIMESTAMPTZ,
-    sent_count INTEGER DEFAULT 0,
-    failed_count INTEGER DEFAULT 0,
-    created_by UUID,
-    created_at TIMESTAMPTZ DEFAULT NOW()
-);
-
-CREATE INDEX IF NOT EXISTS idx_scheduled_next ON scheduled_messages(next_send_at) WHERE is_enabled = true;
-CREATE INDEX IF NOT EXISTS idx_scheduled_group ON scheduled_messages(group_id);
+CREATE INDEX IF NOT EXISTS idx_point_history_user ON point_history(user_id, group_id, created_at DESC);
 
 -- Lotteries table
 CREATE TABLE IF NOT EXISTS lotteries (
@@ -150,66 +129,232 @@ CREATE TABLE IF NOT EXISTS lotteries (
     group_id UUID NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
     title VARCHAR(255) NOT NULL,
     description TEXT,
-    type VARCHAR(20) NOT NULL,
     prize TEXT NOT NULL,
-    prize_image_url VARCHAR(500),
-    conditions JSONB DEFAULT '{}'::jsonb,
-    winner_count INTEGER DEFAULT 1,
-    max_participants INTEGER,
-    is_repeat_winner_allowed BOOLEAN DEFAULT false,
-    status VARCHAR(20) DEFAULT 'draft',
-    start_at TIMESTAMPTZ,
-    end_at TIMESTAMPTZ,
-    duration_minutes INTEGER,
-    last_reminder_at TIMESTAMPTZ,
-    winner_ids JSONB DEFAULT '[]'::jsonb,
-    winner_telegram_ids JSONB DEFAULT '[]'::jsonb,
-    participant_count INTEGER DEFAULT 0,
-    ticket_count INTEGER DEFAULT 0,
-    created_by UUID,
+    prize_count INTEGER DEFAULT 1,
+    start_time TIMESTAMPTZ NOT NULL,
+    end_time TIMESTAMPTZ NOT NULL,
+    is_active BOOLEAN DEFAULT true,
+    participants JSONB DEFAULT '[]'::jsonb,
+    winners JSONB DEFAULT '[]'::jsonb,
+    created_by UUID REFERENCES users(id),
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_lotteries_group ON lotteries(group_id, status);
-CREATE INDEX IF NOT EXISTS idx_lotteries_active ON lotteries(end_at) WHERE status = 'active';
+CREATE INDEX IF NOT EXISTS idx_lotteries_group ON lotteries(group_id);
+CREATE INDEX IF NOT EXISTS idx_lotteries_active ON lotteries(group_id, is_active);
 
--- Lottery participants table
-CREATE TABLE IF NOT EXISTS lottery_participants (
+-- Scheduled messages table
+CREATE TABLE IF NOT EXISTS scheduled_messages (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    lottery_id UUID NOT NULL REFERENCES lotteries(id) ON DELETE CASCADE,
-    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    telegram_id BIGINT NOT NULL,
-    joined_at TIMESTAMPTZ DEFAULT NOW(),
-    is_winner BOOLEAN DEFAULT false,
-    ticket_count INTEGER DEFAULT 1,
-    points_spent INTEGER DEFAULT 0,
-    CONSTRAINT unique_lottery_user UNIQUE (lottery_id, user_id)
-);
-
-CREATE INDEX IF NOT EXISTS idx_lottery_participants ON lottery_participants(lottery_id);
-
--- Verification records table
-CREATE TABLE IF NOT EXISTS verification_records (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID REFERENCES users(id),
-    group_id UUID REFERENCES groups(id) ON DELETE CASCADE,
-    telegram_id BIGINT NOT NULL,
-    verification_type VARCHAR(50) NOT NULL,
-    status VARCHAR(20) DEFAULT 'pending',
-    challenge_data JSONB,
-    answer TEXT,
-    attempt_count INTEGER DEFAULT 0,
-    max_attempts INTEGER DEFAULT 3,
-    completed_at TIMESTAMPTZ,
-    expires_at TIMESTAMPTZ,
+    group_id UUID NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+    content TEXT NOT NULL,
+    content_html TEXT,
+    scheduled_at TIMESTAMPTZ NOT NULL,
+    is_sent BOOLEAN DEFAULT false,
+    sent_at TIMESTAMPTZ,
+    created_by UUID REFERENCES users(id),
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_verification_user ON verification_records(telegram_id, group_id);
-CREATE INDEX IF NOT EXISTS idx_verification_pending ON verification_records(status, expires_at) WHERE status = 'pending';
+CREATE INDEX IF NOT EXISTS idx_scheduled_messages_group ON scheduled_messages(group_id);
+CREATE INDEX IF NOT EXISTS idx_scheduled_messages_pending ON scheduled_messages(is_sent, scheduled_at);
 
--- Admins table
+-- Auto reply rules table
+CREATE TABLE IF NOT EXISTS auto_reply_rules (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    group_id UUID NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+    name VARCHAR(255) NOT NULL,
+    trigger_type VARCHAR(50) NOT NULL, -- keyword, regex, command
+    trigger_value TEXT NOT NULL,
+    reply_content TEXT NOT NULL,
+    reply_content_html TEXT,
+    is_active BOOLEAN DEFAULT true,
+    priority INTEGER DEFAULT 0,
+    created_by UUID REFERENCES users(id),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_auto_reply_group ON auto_reply_rules(group_id);
+CREATE INDEX IF NOT EXISTS idx_auto_reply_active ON auto_reply_rules(group_id, is_active);
+
+-- Message stats table
+CREATE TABLE IF NOT EXISTS message_stats (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    group_id UUID NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    date DATE NOT NULL,
+    message_count INTEGER DEFAULT 0,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    CONSTRAINT unique_group_user_date UNIQUE (group_id, user_id, date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_message_stats_group ON message_stats(group_id, date);
+CREATE INDEX IF NOT EXISTS idx_message_stats_user ON message_stats(user_id, date);
+
+-- Invite stats table
+CREATE TABLE IF NOT EXISTS invite_stats (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    group_id UUID NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    invite_count INTEGER DEFAULT 0,
+    invite_link VARCHAR(500),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    CONSTRAINT unique_group_user_invite UNIQUE (group_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_invite_stats_group ON invite_stats(group_id);
+CREATE INDEX IF NOT EXISTS idx_invite_stats_rank ON invite_stats(group_id, invite_count DESC);
+
+-- Channel settings table
+CREATE TABLE IF NOT EXISTS channel_settings (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    group_id UUID NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+    channel_id BIGINT NOT NULL,
+    channel_title VARCHAR(255),
+    channel_username VARCHAR(255),
+    is_active BOOLEAN DEFAULT true,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    CONSTRAINT unique_group_channel UNIQUE (group_id, channel_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_channel_settings_group ON channel_settings(group_id);
+
+-- Channel forwards table
+CREATE TABLE IF NOT EXISTS channel_forwards (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    group_id UUID NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+    source_channel_id BIGINT NOT NULL,
+    target_channel_id BIGINT NOT NULL,
+    is_active BOOLEAN DEFAULT true,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_channel_forwards_group ON channel_forwards(group_id);
+
+-- Anti-ads rules table
+CREATE TABLE IF NOT EXISTS anti_ads_rules (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    group_id UUID NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+    rule_type VARCHAR(50) NOT NULL, -- keyword, regex, domain
+    rule_value TEXT NOT NULL,
+    is_active BOOLEAN DEFAULT true,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_anti_ads_group ON anti_ads_rules(group_id);
+
+-- Auto ban rules table
+CREATE TABLE IF NOT EXISTS auto_ban_rules (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    group_id UUID NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+    rule_type VARCHAR(50) NOT NULL, -- keyword, regex
+    rule_value TEXT NOT NULL,
+    ban_duration INTEGER, -- minutes, null for permanent
+    is_active BOOLEAN DEFAULT true,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_auto_ban_group ON auto_ban_rules(group_id);
+
+-- Porn detection settings table
+CREATE TABLE IF NOT EXISTS porn_detection_settings (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    group_id UUID NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+    enabled BOOLEAN DEFAULT false,
+    sensitivity VARCHAR(20) DEFAULT 'medium', -- low, medium, high
+    action VARCHAR(50) DEFAULT 'delete', -- delete, warn, ban
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    CONSTRAINT unique_group_porn_detection UNIQUE (group_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_porn_detection_group ON porn_detection_settings(group_id);
+
+-- Menu permissions table
+CREATE TABLE IF NOT EXISTS menu_permissions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    menu_key VARCHAR(100) NOT NULL UNIQUE,
+    menu_name VARCHAR(255) NOT NULL,
+    description TEXT,
+    is_active BOOLEAN DEFAULT true,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_menu_permissions_key ON menu_permissions(menu_key);
+
+-- Chat stats table (for daily statistics)
+CREATE TABLE IF NOT EXISTS chat_stats (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    group_id UUID NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+    date DATE NOT NULL,
+    total_messages INTEGER DEFAULT 0,
+    active_users INTEGER DEFAULT 0,
+    new_members INTEGER DEFAULT 0,
+    left_members INTEGER DEFAULT 0,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    CONSTRAINT unique_group_date_stats UNIQUE (group_id, date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_chat_stats_group ON chat_stats(group_id, date);
+
+-- Verified users table (for verification system)
+CREATE TABLE IF NOT EXISTS verified_users (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    group_id UUID NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+    verified_level INTEGER DEFAULT 1, -- 1, 2, 3
+    verified_at TIMESTAMPTZ DEFAULT NOW(),
+    verified_by UUID REFERENCES users(id),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    CONSTRAINT unique_verified_user_group UNIQUE (user_id, group_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_verified_users_group ON verified_users(group_id);
+CREATE INDEX IF NOT EXISTS idx_verified_users_level ON verified_users(group_id, verified_level);
+
+-- Verified levels config table (认证等级配置)
+CREATE TABLE IF NOT EXISTS verified_levels (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    group_id UUID NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+    level INTEGER NOT NULL, -- 等级: 1, 2, 3
+    name VARCHAR(100) NOT NULL, -- 等级名称
+    badge VARCHAR(50), -- 徽章/图标
+    color VARCHAR(20), -- 颜色
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    CONSTRAINT unique_group_level UNIQUE (group_id, level)
+);
+
+CREATE INDEX IF NOT EXISTS idx_verified_levels_group ON verified_levels(group_id);
+
+-- Verified messages config table (认证回复消息配置)
+CREATE TABLE IF NOT EXISTS verified_messages (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    group_id UUID NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+    unverified_message TEXT, -- 未认证用户回复消息
+    unverified_message_html TEXT, -- 未认证用户回复消息(HTML格式)
+    verified_message TEXT, -- 已认证用户回复消息
+    verified_message_html TEXT, -- 已认证用户回复消息(HTML格式)
+    include_level_1 BOOLEAN DEFAULT true, -- 是否包含等级1变量
+    include_level_2 BOOLEAN DEFAULT true, -- 是否包含等级2变量
+    include_level_3 BOOLEAN DEFAULT true, -- 是否包含等级3变量
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    CONSTRAINT unique_group_messages UNIQUE (group_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_verified_messages_group ON verified_messages(group_id);
+
+-- Admins table (for web admin panel)
 CREATE TABLE IF NOT EXISTS admins (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     telegram_id BIGINT UNIQUE,
@@ -247,70 +392,34 @@ CREATE TABLE IF NOT EXISTS account_change_history (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     group_id UUID REFERENCES groups(id) ON DELETE CASCADE,
-    change_type VARCHAR(50) NOT NULL, -- 'nickname', 'username', 'both'
-    old_nickname VARCHAR(255),
-    new_nickname VARCHAR(255),
-    old_username VARCHAR(255),
-    new_username VARCHAR(255),
+    change_type VARCHAR(50) NOT NULL, -- 'nickname', 'username'
+    old_value VARCHAR(255),
+    new_value VARCHAR(255),
     changed_at TIMESTAMPTZ DEFAULT NOW(),
-    detected_at TIMESTAMPTZ DEFAULT NOW()
+    created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_account_change_user ON account_change_history(user_id, changed_at DESC);
-CREATE INDEX IF NOT EXISTS idx_account_change_group ON account_change_history(group_id, changed_at DESC);
-CREATE INDEX IF NOT EXISTS idx_account_change_type ON account_change_history(change_type, changed_at DESC);
+CREATE INDEX IF NOT EXISTS idx_account_changes_user ON account_change_history(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_account_changes_group ON account_change_history(group_id, created_at DESC);
 
--- Verified users table (认证用户)
-CREATE TABLE IF NOT EXISTS verified_users (
+-- Verification records table
+CREATE TABLE IF NOT EXISTS verification_records (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    group_id UUID NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
-    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    verified_level INTEGER NOT NULL DEFAULT 1, -- 认证等级: 1, 2, 3
-    verified_by UUID REFERENCES users(id), -- 认证管理员
-    verified_at TIMESTAMPTZ DEFAULT NOW(),
-    expires_at TIMESTAMPTZ, -- 过期时间, NULL表示永久
-    notes TEXT, -- 备注
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    updated_at TIMESTAMPTZ DEFAULT NOW(),
-    CONSTRAINT unique_group_user_verified UNIQUE (group_id, user_id)
+    telegram_id BIGINT NOT NULL,
+    group_id UUID REFERENCES groups(id) ON DELETE CASCADE,
+    status VARCHAR(50) DEFAULT 'pending', -- pending, completed, failed
+    challenge_type VARCHAR(50), -- math, image, etc.
+    challenge_data JSONB,
+    answer TEXT,
+    attempt_count INTEGER DEFAULT 0,
+    max_attempts INTEGER DEFAULT 3,
+    completed_at TIMESTAMPTZ,
+    expires_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_verified_users_group ON verified_users(group_id);
-CREATE INDEX IF NOT EXISTS idx_verified_users_user ON verified_users(user_id);
-CREATE INDEX IF NOT EXISTS idx_verified_users_level ON verified_users(group_id, verified_level);
-
--- Verified levels config table (认证等级配置)
-CREATE TABLE IF NOT EXISTS verified_levels (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    group_id UUID NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
-    level INTEGER NOT NULL, -- 等级: 1, 2, 3
-    name VARCHAR(100) NOT NULL, -- 等级名称
-    badge VARCHAR(50), -- 徽章/图标
-    color VARCHAR(20), -- 颜色
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    updated_at TIMESTAMPTZ DEFAULT NOW(),
-    CONSTRAINT unique_group_level UNIQUE (group_id, level)
-);
-
-CREATE INDEX IF NOT EXISTS idx_verified_levels_group ON verified_levels(group_id);
-
--- Verified messages config table (认证回复消息配置)
-CREATE TABLE IF NOT EXISTS verified_messages (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    group_id UUID NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
-    unverified_message TEXT, -- 未认证用户回复消息
-    unverified_message_html TEXT, -- 未认证用户回复消息(HTML格式)
-    verified_message TEXT, -- 已认证用户回复消息
-    verified_message_html TEXT, -- 已认证用户回复消息(HTML格式)
-    include_level_1 BOOLEAN DEFAULT true, -- 是否包含等级1变量
-    include_level_2 BOOLEAN DEFAULT true, -- 是否包含等级2变量
-    include_level_3 BOOLEAN DEFAULT true, -- 是否包含等级3变量
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    updated_at TIMESTAMPTZ DEFAULT NOW(),
-    CONSTRAINT unique_group_messages UNIQUE (group_id)
-);
-
-CREATE INDEX IF NOT EXISTS idx_verified_messages_group ON verified_messages(group_id);
+CREATE INDEX IF NOT EXISTS idx_verification_user ON verification_records(telegram_id, group_id);
+CREATE INDEX IF NOT EXISTS idx_verification_pending ON verification_records(status, expires_at) WHERE status = 'pending';
 
 -- Updated at trigger function
 CREATE OR REPLACE FUNCTION update_updated_at_column()
@@ -333,3 +442,9 @@ CREATE TRIGGER update_user_points_updated_at BEFORE UPDATE ON user_points
 
 CREATE TRIGGER update_lotteries_updated_at BEFORE UPDATE ON lotteries
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- Insert default admin user (password: admin123)
+-- Note: In production, use bcrypt hashed password
+INSERT INTO admins (username, password_hash, display_name, level, is_active)
+VALUES ('admin', '$2b$10$YourHashedPasswordHere', 'Administrator', 9, true)
+ON CONFLICT (username) DO NOTHING;

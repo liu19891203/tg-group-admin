@@ -37,7 +37,7 @@
       </form>
       
       <div style="text-align: center; font-size: 12px; color: #909399;">
-        默认管理员: admin / ******
+        默认管理员: admin / admin123
       </div>
     </div>
   </div>
@@ -52,6 +52,8 @@ const username = ref('')
 const password = ref('')
 const loading = ref(false)
 
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://tg-group-admin.vercel.app'
+
 async function handleLogin() {
   if (!username.value || !password.value) {
     alert('请输入用户名和密码')
@@ -61,18 +63,29 @@ async function handleLogin() {
   loading.value = true
   
   try {
-    // 管理员登录验证
-    const ADMIN_USERNAME = 'admin'
-    const ADMIN_PASSWORD = 'your-new-password-here'  // 修改这里
+    const response = await fetch(`${API_BASE_URL}/api/admin/login`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        username: username.value,
+        password: password.value
+      })
+    })
     
-    if (username.value === ADMIN_USERNAME && password.value === ADMIN_PASSWORD) {
-      localStorage.setItem('token', 'test-token')
+    const result = await response.json()
+    
+    if (result.success && result.data.token) {
+      localStorage.setItem('token', result.data.token)
+      localStorage.setItem('user', JSON.stringify(result.data.user))
       router.push('/')
     } else {
-      alert('用户名或密码错误')
+      alert(result.error || '登录失败')
     }
   } catch (error) {
-    alert('登录失败，请重试')
+    console.error('Login error:', error)
+    alert('登录失败，请检查网络连接')
   } finally {
     loading.value = false
   }

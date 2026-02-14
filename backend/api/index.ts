@@ -561,8 +561,109 @@ const handlers: Record<string, Handler> = {
     res.json({ success: true, data: req.body });
   },
 
-  'GET /admin/login': async (req, res) => {
-    res.json({ success: true, data: { token: 'mock-token', user: { id: 1, username: 'admin' } } });
+  'POST /admin/login': async (req, res) => {
+    const { username, password } = req.body;
+    
+    if (!username || !password) {
+      res.status(400).json({ success: false, error: '用户名和密码不能为空' });
+      return;
+    }
+    
+    // 查询管理员
+    const { data: admin, error } = await supabase
+      .from('admins')
+      .select('*')
+      .eq('username', username)
+      .eq('is_active', true)
+      .single();
+    
+    if (error || !admin) {
+      res.status(401).json({ success: false, error: '用户名或密码错误' });
+      return;
+    }
+    
+    // 验证密码 (bcrypt hash)
+    const bcrypt = await import('bcryptjs');
+    const isValid = await bcrypt.compare(password, admin.password_hash);
+    
+    if (!isValid) {
+      res.status(401).json({ success: false, error: '用户名或密码错误' });
+      return;
+    }
+    
+    // 更新最后登录时间
+    await supabase
+      .from('admins')
+      .update({ last_login_at: new Date().toISOString() })
+      .eq('id', admin.id);
+    
+    // 生成简单 token (生产环境应使用 JWT)
+    const token = Buffer.from(`${admin.id}:${Date.now()}`).toString('base64');
+    
+    res.json({
+      success: true,
+      data: {
+        token,
+        user: {
+          id: admin.id,
+          username: admin.username,
+          display_name: admin.display_name,
+          level: admin.level
+        }
+      }
+    });
+  },
+  
+  'POST /admin/change-password': async (req, res) => {
+    const { username, old_password, new_password } = req.body;
+    
+    if (!username || !old_password || !new_password) {
+      res.status(400).json({ success: false, error: '参数不完整' });
+      return;
+    }
+    
+    if (new_password.length < 6) {
+      res.status(400).json({ success: false, error: '新密码至少6位' });
+      return;
+    }
+    
+    // 查询管理员
+    const { data: admin, error } = await supabase
+      .from('admins')
+      .select('*')
+      .eq('username', username)
+      .eq('is_active', true)
+      .single();
+    
+    if (error || !admin) {
+      res.status(401).json({ success: false, error: '用户不存在' });
+      return;
+    }
+    
+    // 验证旧密码
+    const bcrypt = await import('bcryptjs');
+    const isValid = await bcrypt.compare(old_password, admin.password_hash);
+    
+    if (!isValid) {
+      res.status(401).json({ success: false, error: '原密码错误' });
+      return;
+    }
+    
+    // 生成新密码 hash
+    const newHash = await bcrypt.hash(new_password, 10);
+    
+    // 更新密码
+    const { error: updateError } = await supabase
+      .from('admins')
+      .update({ password_hash: newHash })
+      .eq('id', admin.id);
+    
+    if (updateError) {
+      res.status(500).json({ success: false, error: '密码修改失败' });
+      return;
+    }
+    
+    res.json({ success: true, message: '密码修改成功' });
   },
 
   'GET /admin/auth/me': async (req, res) => {

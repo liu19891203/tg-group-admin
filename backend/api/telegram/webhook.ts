@@ -49,8 +49,18 @@ async function handleBotAddedToGroup(update: TelegramUpdate) {
   const from = myChatMember.from;
   const newStatus = myChatMember.new_chat_member.status;
 
+  console.log('Bot added to group:', {
+    chat_id: chat.id,
+    chat_title: chat.title,
+    chat_type: chat.type,
+    new_status: newStatus,
+    from_id: from?.id,
+    from_username: from?.username
+  });
+
   if (newStatus === 'member' || newStatus === 'administrator') {
-    const { data: groupData } = await supabase
+    // 1. 插入/更新群组
+    const { data: groupData, error: groupError } = await supabase
       .from('groups')
       .upsert({
         chat_id: chat.id,
@@ -62,8 +72,16 @@ async function handleBotAddedToGroup(update: TelegramUpdate) {
       .select()
       .single();
 
-    if (groupData && from) {
-      const { data: userData } = await supabase
+    if (groupError) {
+      console.error('Error upserting group:', groupError);
+      return;
+    }
+
+    console.log('Group upserted:', groupData);
+
+    // 2. 插入/更新用户（添加群组的人）
+    if (from) {
+      const { data: userData, error: userError } = await supabase
         .from('users')
         .upsert({
           telegram_id: from.id,
@@ -74,16 +92,40 @@ async function handleBotAddedToGroup(update: TelegramUpdate) {
         .select()
         .single();
 
-      if (userData) {
-        await supabase.from('group_administrators').upsert({
-          group_id: groupData.id,
-          user_id: userData.id,
-          is_owner: true
-        }, { onConflict: 'group_id,user_id' });
+      if (userError) {
+        console.error('Error upserting user:', userError);
+      } else {
+        console.log('User upserted:', userData);
 
-        await supabase.from('group_configs').upsert({
-          group_id: groupData.id
-        }, { onConflict: 'group_id' });
+        // 3. 添加群组管理员关系
+        if (groupData && userData) {
+          const { error: adminError } = await supabase
+            .from('group_administrators')
+            .upsert({
+              group_id: groupData.id,
+              user_id: userData.id,
+              is_owner: true
+            }, { onConflict: 'group_id,user_id' });
+
+          if (adminError) {
+            console.error('Error upserting group admin:', adminError);
+          } else {
+            console.log('Group admin added');
+          }
+
+          // 4. 创建群组配置
+          const { error: configError } = await supabase
+            .from('group_configs')
+            .upsert({
+              group_id: groupData.id
+            }, { onConflict: 'group_id' });
+
+          if (configError) {
+            console.error('Error upserting group config:', configError);
+          } else {
+            console.log('Group config created');
+          }
+        }
       }
     }
 
@@ -100,7 +142,16 @@ async function handleBotAddedToGroup(update: TelegramUpdate) {
   }
 
   if (newStatus === 'left' || newStatus === 'kicked') {
-    await supabase.from('groups').update({ is_active: false }).eq('chat_id', chat.id);
+    const { error } = await supabase
+      .from('groups')
+      .update({ is_active: false })
+      .eq('chat_id', chat.id);
+    
+    if (error) {
+      console.error('Error deactivating group:', error);
+    } else {
+      console.log('Group deactivated:', chat.id);
+    }
   }
 }
 
