@@ -108,18 +108,31 @@ const handlers: Record<string, Handler> = {
   },
 
   'GET /admin/dashboard': async (req, res) => {
-    const [groups, users] = await Promise.all([
-      supabase.from('groups').select('id', { count: 'exact' }).eq('is_active', true),
-      supabase.from('users').select('id', { count: 'exact' })
+    const [groups, users, chatStats] = await Promise.all([
+      supabase.from('groups').select('id, title, member_count', { count: 'exact' }).eq('is_active', true),
+      supabase.from('users').select('id', { count: 'exact' }),
+      supabase.from('chat_stats').select('*').order('date', { ascending: false }).limit(7)
     ]);
+
+    const chartData = chatStats.data?.reverse() || [];
+    const labels = chartData.map(d => {
+      const date = new Date(d.date);
+      return `${date.getMonth() + 1}/${date.getDate()}`;
+    });
+
     res.json({
       total_groups: groups.count || 0,
       total_users: users.count || 0,
-      messages_today: 0,
-      messages_this_month: 0,
-      active_users_today: 0,
-      top_groups: [],
-      recent_activity: []
+      messages_today: chartData[0]?.total_messages || 0,
+      messages_this_month: chatStats.data?.reduce((sum, d) => sum + (d.total_messages || 0), 0) || 0,
+      active_users_today: chartData[0]?.active_users || 0,
+      top_groups: groups.data?.slice(0, 5) || [],
+      recent_activity: [],
+      chart: {
+        labels,
+        messages: chartData.map(d => d.total_messages || 0),
+        activeUsers: chartData.map(d => d.active_users || 0)
+      }
     });
   },
 

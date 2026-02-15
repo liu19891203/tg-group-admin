@@ -599,6 +599,7 @@ import { ref, onMounted, computed } from 'vue'
 import { ElMessage } from 'element-plus'
 import { UserFilled, SemiSelect, Rank, Minus, Close, Plus, Delete, Grid, View, ChatSquare } from '@element-plus/icons-vue'
 import api from '@/api'
+import { useSelectedGroup } from '@/composables/useSelectedGroup'
 
 interface InlineButton {
   text: string
@@ -629,6 +630,8 @@ interface VerificationConfig {
   verification_reply_buttons?: ReplyButton[]
   success_reply_buttons?: ReplyButton[]
 }
+
+const { currentGroupId, hasGroup } = useSelectedGroup()
 
 const formData = ref<VerificationConfig>({
   enabled: false,
@@ -853,8 +856,9 @@ const removeReplyButtonFromList = (field: 'verification' | 'success', index: num
 }
 
 async function loadConfig() {
+  if (!currentGroupId.value) return
   try {
-    const response = await api.get<{ data: VerificationConfig }>('/admin/verification?groupId=demo')
+    const response = await api.get<{ data: VerificationConfig }>(`/admin/verification?group_id=${currentGroupId.value}`)
     if (response.data) {
       formData.value = response.data
     }
@@ -864,9 +868,10 @@ async function loadConfig() {
 }
 
 async function saveConfig() {
+  if (!currentGroupId.value) return
   try {
     const response = await api.post<ApiResponse>('/admin/verification', {
-      groupId: 'demo',
+      group_id: currentGroupId.value,
       config: formData.value
     })
     

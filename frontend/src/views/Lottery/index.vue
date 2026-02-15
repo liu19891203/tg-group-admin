@@ -366,6 +366,7 @@ import { ref, onMounted, computed, reactive } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
 import api from '@/api'
+import { useSelectedGroup } from '@/composables/useSelectedGroup'
 
 interface LotteryConfig {
   id?: string
@@ -405,6 +406,8 @@ interface DrawResult {
   total_participants: number
   draw_time: string
 }
+
+const { currentGroupId, hasGroup } = useSelectedGroup()
 
 const activeTab = ref('all')
 const lotteries = ref<LotteryConfig[]>([])
@@ -463,8 +466,9 @@ const insertDrawVariable = (variable: string) => {
 }
 
 async function loadLotteries() {
+  if (!currentGroupId.value) return
   try {
-    const response = await api.get<{ data: LotteryConfig[] }>('/admin/lottery?groupId=demo')
+    const response = await api.get<{ data: LotteryConfig[] }>(`/admin/lottery?group_id=${currentGroupId.value}`)
     if (response.data) {
       lotteries.value = response.data.map(l => ({ ...l, id: l.id || Math.random().toString(36).substr(2, 9) }))
     }
@@ -491,8 +495,8 @@ async function deleteLottery(lotteryId: string) {
     })
     
     const response = await api.delete<ApiResponse>('/admin/lottery', {
-      groupId: 'demo',
-      lotteryId
+      group_id: currentGroupId.value,
+      lottery_id: lotteryId
     })
     
     if (response.success) {
@@ -505,14 +509,15 @@ async function deleteLottery(lotteryId: string) {
 }
 
 async function drawLottery(lottery: LotteryConfig) {
+  if (!currentGroupId.value) return
   try {
     await ElMessageBox.confirm('确定要开奖吗？开奖后将无法撤销。', '确认开奖', {
       type: 'warning'
     })
     
     const response = await api.post<DrawResult>('/admin/lottery/draw', {
-      groupId: 'demo',
-      lotteryId: lottery.id
+      group_id: currentGroupId.value,
+      lottery_id: lottery.id
     })
     
     if (response.success) {
@@ -531,6 +536,7 @@ async function drawLottery(lottery: LotteryConfig) {
 }
 
 async function saveLottery() {
+  if (!currentGroupId.value) return
   if (!newLottery.title || !newLottery.prize) {
     ElMessage.warning('请填写抽奖标题和奖品')
     return
@@ -538,7 +544,7 @@ async function saveLottery() {
 
   try {
     const response = await api.post<ApiResponse>('/admin/lottery', {
-      groupId: 'demo',
+      group_id: currentGroupId.value,
       lottery: newLottery
     })
     

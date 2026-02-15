@@ -150,8 +150,13 @@ const stats = reactive({
   messages_today: 0,
   messages_this_month: 0,
   active_users_today: 0,
-  top_groups: [],
-  recent_activity: []
+  top_groups: [] as Array<{ id: string; title: string; member_count: number }>,
+  recent_activity: [],
+  chart: {
+    labels: [] as string[],
+    messages: [] as number[],
+    activeUsers: [] as number[]
+  }
 })
 
 const chartOption = computed(() => ({
@@ -170,7 +175,7 @@ const chartOption = computed(() => ({
   xAxis: {
     type: 'category',
     boundaryGap: false,
-    data: ['周一', '周二', '周三', '周四', '周五', '周六', '周日']
+    data: stats.chart.labels.length > 0 ? stats.chart.labels : ['周一', '周二', '周三', '周四', '周五', '周六', '周日']
   },
   yAxis: {
     type: 'value'
@@ -180,14 +185,14 @@ const chartOption = computed(() => ({
       name: '消息数',
       type: 'line',
       smooth: true,
-      data: [120, 132, 101, 134, 90, 230, 210],
+      data: stats.chart.messages.length > 0 ? stats.chart.messages : [0, 0, 0, 0, 0, 0, 0],
       itemStyle: { color: '#409eff' }
     },
     {
       name: '活跃用户',
       type: 'line',
       smooth: true,
-      data: [220, 182, 191, 234, 290, 330, 310],
+      data: stats.chart.activeUsers.length > 0 ? stats.chart.activeUsers : [0, 0, 0, 0, 0, 0, 0],
       itemStyle: { color: '#67c23a' }
     }
   ]

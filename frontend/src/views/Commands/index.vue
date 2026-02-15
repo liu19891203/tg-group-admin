@@ -109,6 +109,7 @@
 import { ref, onMounted, computed } from 'vue'
 import { ElMessage } from 'element-plus'
 import api from '@/api'
+import { useSelectedGroup } from '@/composables/useSelectedGroup'
 
 interface GroupCommand {
   command: string
@@ -127,6 +128,8 @@ interface CommandConfig {
   commands: GroupCommand[]
 }
 
+const { currentGroupId, hasGroup } = useSelectedGroup()
+
 const formData = ref<CommandConfig>({
   enabled: true,
   auto_delete_all: true,
@@ -142,8 +145,9 @@ const userCommands = computed(() => {
 })
 
 async function loadConfig() {
+  if (!currentGroupId.value) return
   try {
-    const response = await api.get<{ data: CommandConfig }>('/admin/commands?groupId=demo')
+    const response = await api.get<{ data: CommandConfig }>(`/admin/commands?group_id=${currentGroupId.value}`)
     if (response.data) {
       formData.value = response.data
     }
@@ -153,9 +157,10 @@ async function loadConfig() {
 }
 
 async function saveConfig() {
+  if (!currentGroupId.value) return
   try {
     const response = await api.post<ApiResponse>('/admin/commands', {
-      groupId: 'demo',
+      group_id: currentGroupId.value,
       config: formData.value
     })
     

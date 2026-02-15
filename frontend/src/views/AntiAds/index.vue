@@ -152,6 +152,7 @@
 import { ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import api from '@/api'
+import { useSelectedGroup } from '@/composables/useSelectedGroup'
 
 interface AntiAdsConfig {
   enabled: boolean
@@ -171,6 +172,8 @@ interface DetectionResult {
   punishment: 'delete' | 'warn' | 'mute' | 'kick' | 'ban'
 }
 
+const { currentGroupId, hasGroup } = useSelectedGroup()
+
 const formData = ref<AntiAdsConfig>({
   enabled: false,
   keywords: ['微信', 'QQ', '加群', '私聊', '推广', '广告'],
@@ -186,8 +189,9 @@ const testMessage = ref('')
 const testResult = ref<DetectionResult | null>(null)
 
 async function loadConfig() {
+  if (!currentGroupId.value) return
   try {
-    const response = await api.get<{ data: AntiAdsConfig }>('/admin/anti-ads?groupId=demo')
+    const response = await api.get<{ data: AntiAdsConfig }>(`/admin/anti-ads?group_id=${currentGroupId.value}`)
     if (response.data) {
       formData.value = response.data
     }
@@ -197,9 +201,10 @@ async function loadConfig() {
 }
 
 async function saveConfig() {
+  if (!currentGroupId.value) return
   try {
     const response = await api.post<ApiResponse>('/admin/anti-ads', {
-      groupId: 'demo',
+      group_id: currentGroupId.value,
       config: formData.value
     })
     
@@ -225,6 +230,7 @@ function removeKeyword(keyword: string) {
 }
 
 async function testDetection() {
+  if (!currentGroupId.value) return
   if (!testMessage.value.trim()) {
     ElMessage.warning('请输入测试消息')
     return
@@ -232,7 +238,7 @@ async function testDetection() {
 
   try {
     const response = await api.post<DetectionResult>('/admin/anti-ads/detect', {
-      groupId: 'demo',
+      group_id: currentGroupId.value,
       message: {
         text: testMessage.value,
         message_type: 'text'

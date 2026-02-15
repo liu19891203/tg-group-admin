@@ -297,6 +297,7 @@ import { ref, onMounted, computed, reactive } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Clock, Delete, SemiSelect, Rank, Minus, Close, UserFilled } from '@element-plus/icons-vue'
 import api from '@/api'
+import { useSelectedGroup } from '@/composables/useSelectedGroup'
 
 interface ScheduledMessage {
   id?: string
@@ -318,13 +319,15 @@ interface ScheduledMessage {
   status: 'pending' | 'sent' | 'failed'
 }
 
+const { currentGroupId, hasGroup } = useSelectedGroup()
+
 const activeTab = ref('all')
 const messages = ref<ScheduledMessage[]>([])
 const showCreateDialog = ref(false)
 const editingMessage = ref<ScheduledMessage | null>(null)
 
 const newMessage = reactive<Omit<ScheduledMessage, 'id'>>({
-  group_id: 'demo',
+  group_id: '',
   message_type: 'text',
   content: '',
   schedule_type: 'once',
@@ -408,8 +411,9 @@ const removeImage = () => {
 }
 
 async function loadMessages() {
+  if (!currentGroupId.value) return
   try {
-    const response = await api.get<{ data: ScheduledMessage[] }>('/admin/scheduled-messages?groupId=demo')
+    const response = await api.get<{ data: ScheduledMessage[] }>(`/admin/scheduled-messages?group_id=${currentGroupId.value}`)
     if (response.data) {
       messages.value = response.data
     }
@@ -425,14 +429,15 @@ function editMessage(msg: ScheduledMessage) {
 }
 
 async function deleteMessage(messageId: string) {
+  if (!currentGroupId.value) return
   try {
     await ElMessageBox.confirm('确定删除这个定时消息吗？', '确认删除', {
       type: 'warning'
     })
     
     const response = await api.delete<ApiResponse>('/admin/scheduled-messages', {
-      groupId: 'demo',
-      messageId
+      group_id: currentGroupId.value,
+      message_id: messageId
     })
     
     if (response.success) {
@@ -445,10 +450,11 @@ async function deleteMessage(messageId: string) {
 }
 
 async function toggleMessage(msg: ScheduledMessage) {
+  if (!currentGroupId.value) return
   try {
     const response = await api.put<ApiResponse>('/admin/scheduled-messages', {
-      groupId: 'demo',
-      messageId: msg.id,
+      group_id: currentGroupId.value,
+      message_id: msg.id,
       updates: { enabled: msg.enabled }
     })
     
@@ -469,6 +475,7 @@ function addButton() {
 }
 
 async function saveMessage() {
+  if (!currentGroupId.value) return
   if (!newMessage.content) {
     ElMessage.warning('请输入消息内容')
     return
@@ -481,7 +488,7 @@ async function saveMessage() {
 
   try {
     const response = await api.post<ApiResponse>('/admin/scheduled-messages', {
-      groupId: 'demo',
+      group_id: currentGroupId.value,
       message: newMessage
     })
     
@@ -498,7 +505,7 @@ async function saveMessage() {
 
 function resetNewMessage() {
   Object.assign(newMessage, {
-    group_id: 'demo',
+    group_id: currentGroupId.value || '',
     message_type: 'text',
     content: '',
     schedule_type: 'once',

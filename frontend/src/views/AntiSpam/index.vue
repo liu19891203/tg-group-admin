@@ -129,6 +129,7 @@
 import { ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import api from '@/api'
+import { useSelectedGroup } from '@/composables/useSelectedGroup'
 
 interface AntiSpamConfig {
   enabled: boolean
@@ -140,6 +141,8 @@ interface AntiSpamConfig {
   check_duplicates: boolean
   duplicate_threshold: number
 }
+
+const { currentGroupId, hasGroup } = useSelectedGroup()
 
 const formData = ref<AntiSpamConfig>({
   enabled: false,
@@ -153,8 +156,9 @@ const formData = ref<AntiSpamConfig>({
 })
 
 async function loadConfig() {
+  if (!currentGroupId.value) return
   try {
-    const response = await api.get<{ data: AntiSpamConfig }>('/admin/anti-spam?groupId=demo')
+    const response = await api.get<{ data: AntiSpamConfig }>(`/admin/anti-spam?group_id=${currentGroupId.value}`)
     if (response.data) {
       formData.value = response.data
     }
@@ -164,9 +168,10 @@ async function loadConfig() {
 }
 
 async function saveConfig() {
+  if (!currentGroupId.value) return
   try {
     const response = await api.post<ApiResponse>('/admin/anti-spam', {
-      groupId: 'demo',
+      group_id: currentGroupId.value,
       config: formData.value
     })
     

@@ -361,6 +361,7 @@ import { ElMessage } from 'element-plus'
 import { Plus, Delete, SemiSelect, Rank, Minus, Close, UserFilled, Grid, View } from '@element-plus/icons-vue'
 import InlineKeyboardEditor, { type InlineButton } from '@/components/InlineKeyboardEditor/InlineKeyboardEditor.vue'
 import api from '@/api'
+import { useSelectedGroup } from '@/composables/useSelectedGroup'
 
 interface PointsConfig {
   enabled: boolean
@@ -394,6 +395,8 @@ interface CheckinResult {
   bonus: number
   message: string
 }
+
+const { currentGroupId, hasGroup } = useSelectedGroup()
 
 const formData = ref<PointsConfig>({
   enabled: true,
@@ -506,8 +509,9 @@ const todayCheckins = ref(0)
 const activeUsers = ref(0)
 
 async function loadConfig() {
+  if (!currentGroupId.value) return
   try {
-    const response = await api.get<{ data: PointsConfig }>('/admin/points?groupId=demo')
+    const response = await api.get<{ data: PointsConfig }>(`/admin/points?group_id=${currentGroupId.value}`)
     if (response.data) {
       formData.value = response.data
     }
@@ -517,13 +521,14 @@ async function loadConfig() {
 }
 
 async function loadRank() {
+  if (!currentGroupId.value) return
   try {
     const response = await api.post<{
       success: boolean
       ranks: UserRank[]
       total_users: number
     }>('/admin/points/rank', {
-      groupId: 'demo',
+      group_id: currentGroupId.value,
       period: rankPeriod.value,
       limit: 10
     })
@@ -561,7 +566,7 @@ async function saveConfig() {
   
   try {
     const response = await api.post<ApiResponse>('/admin/points', {
-      groupId: 'demo',
+      group_id: currentGroupId.value,
       config: formData.value
     })
     
@@ -576,12 +581,13 @@ async function saveConfig() {
 }
 
 async function testCheckin() {
+  if (!currentGroupId.value) return
   checkinDisabled.value = true
   
   try {
     const response = await api.post<CheckinResult>('/admin/points/checkin', {
-      groupId: 'demo',
-      userId: 'test_user',
+      group_id: currentGroupId.value,
+      user_id: 'test_user',
       telegramId: 123456789
     })
     

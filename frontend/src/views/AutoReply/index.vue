@@ -321,6 +321,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Delete, SemiSelect, Rank, Minus, Close, UserFilled, Grid, View } from '@element-plus/icons-vue'
 import InlineKeyboardEditor, { type InlineButton } from '@/components/InlineKeyboardEditor/InlineKeyboardEditor.vue'
 import api from '@/api'
+import { useSelectedGroup } from '@/composables/useSelectedGroup'
 
 interface ApiResponse {
   success: boolean
@@ -363,6 +364,8 @@ interface MatchResult {
   delete_after?: number
   delete_type: 'immediate' | 'delay'
 }
+
+const { currentGroupId, hasGroup } = useSelectedGroup()
 
 const formData = ref<AutoReplyConfig>({
   enabled: false,
@@ -463,8 +466,9 @@ const removeImage = () => {
 }
 
 async function loadConfig() {
+  if (!currentGroupId.value) return
   try {
-    const response = await api.get<{ data: AutoReplyConfig }>('/admin/auto-replies?groupId=demo')
+    const response = await api.get<{ data: AutoReplyConfig }>(`/admin/auto-replies?group_id=${currentGroupId.value}`)
     if (response.data) {
       formData.value = response.data
     }
@@ -474,9 +478,10 @@ async function loadConfig() {
 }
 
 async function saveConfig() {
+  if (!currentGroupId.value) return
   try {
     const response = await api.post<ApiResponse>('/admin/auto-replies', {
-      groupId: 'demo',
+      group_id: currentGroupId.value,
       config: formData.value
     })
     
