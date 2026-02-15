@@ -1,4 +1,3 @@
-// @ts-nocheck
 // Database Types for Supabase
 
 export interface Database {
@@ -36,8 +35,13 @@ export interface Database {
       };
       scheduled_messages: {
         Row: ScheduledMessage;
-        Insert: Omit<ScheduledMessage, 'id' | 'created_at'>;
-        Update: Partial<Omit<ScheduledMessage, 'id'>>;
+        Insert: Omit<ScheduledMessage, 'id' | 'created_at' | 'sent_count' | 'failed_count'> & {
+          id?: string;
+          created_at?: string;
+          sent_count?: number;
+          failed_count?: number;
+        };
+        Update: Partial<ScheduledMessage>;
       };
       lotteries: {
         Row: Lottery;
@@ -94,21 +98,6 @@ export interface Database {
         Insert: Omit<UserInviteLink, 'id' | 'created_at'>;
         Update: Partial<Omit<UserInviteLink, 'id'>>;
       };
-      user_points: {
-        Row: UserPoint;
-        Insert: Omit<UserPoint, 'id' | 'created_at' | 'updated_at'>;
-        Update: Partial<Omit<UserPoint, 'id'>>;
-      };
-      points_logs: {
-        Row: PointsLog;
-        Insert: Omit<PointsLog, 'id' | 'created_at'>;
-        Update: Partial<Omit<PointsLog, 'id'>>;
-      };
-      operation_logs: {
-        Row: OperationLog;
-        Insert: Omit<OperationLog, 'id' | 'created_at'>;
-        Update: Partial<Omit<OperationLog, 'id'>>;
-      };
       invite_leaderboard_config: {
         Row: InviteLeaderboardConfig;
         Insert: Omit<InviteLeaderboardConfig, 'id' | 'created_at' | 'updated_at'>;
@@ -118,11 +107,6 @@ export interface Database {
         Row: InviteVerificationRule;
         Insert: Omit<InviteVerificationRule, 'id' | 'created_at' | 'updated_at'>;
         Update: Partial<Omit<InviteVerificationRule, 'id'>>;
-      };
-      verification_records: {
-        Row: VerificationRecord;
-        Insert: Omit<VerificationRecord, 'id' | 'created_at'>;
-        Update: Partial<Omit<VerificationRecord, 'id'>>;
       };
       verified_levels: {
         Row: VerifiedLevel;
@@ -145,6 +129,9 @@ export interface Database {
         Update: Partial<Omit<PendingDeleteMessage, 'id'>>;
       };
     };
+    Views: Record<string, never>;
+    Functions: Record<string, never>;
+    Enums: Record<string, never>;
   };
 }
 
@@ -374,22 +361,26 @@ export interface InlineKeyboardButton {
 
 export interface ScheduledMessage {
   id: string;
-  group_id: string;
-  channel_id?: number;
-  title?: string;
-  message_content: MessageContent;
-  schedule_type: 'cron' | 'interval' | 'once';
+  group_id?: string | null;
+  channel_id?: number | null;
+  message_content: {
+    text?: string;
+    parse_mode?: string;
+    reply_markup?: any;
+  } | MessageContent;
+  schedule_type: 'once' | 'interval' | 'cron';
   cron_expr?: string;
   interval_minutes?: number;
   start_at?: string;
   end_at?: string;
-  is_enabled: boolean;
-  last_sent_at?: string;
   next_send_at?: string;
+  last_sent_at?: string;
   sent_count: number;
   failed_count: number;
+  is_enabled: boolean;
   created_by?: string;
   created_at: string;
+  updated_at?: string;
 }
 
 export interface MessageContent {
@@ -637,19 +628,6 @@ export interface UserPoint {
   updated_at: string;
 }
 
-export interface PointsLog {
-  id: string;
-  user_id: string;
-  group_id: string;
-  telegram_id: number;
-  change_type: string;
-  change_amount: number;
-  points_before: number;
-  points_after: number;
-  description?: string;
-  created_at: string;
-}
-
 export interface OperationLog {
   id: string;
   group_id: string;
@@ -688,21 +666,6 @@ export interface InviteVerificationRule {
   is_active: boolean;
   created_at: string;
   updated_at: string;
-}
-
-export interface VerificationRecord {
-  id: string;
-  group_id: string;
-  telegram_id: number;
-  verification_type: string;
-  status: 'pending' | 'passed' | 'failed' | 'expired';
-  challenge_data?: Record<string, any>;
-  answer?: string;
-  expires_at: string;
-  attempt_count: number;
-  max_attempts: number;
-  completed_at?: string;
-  created_at: string;
 }
 
 export interface PendingDeleteMessage {

@@ -2,6 +2,13 @@ import { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
 import { scheduledMessagesService } from '../../services/scheduledMessagesService';
 
+interface TelegramApiResponse {
+  ok: boolean;
+  description?: string;
+  error_code?: number;
+  result?: any;
+}
+
 const supabaseUrl = process.env.SUPABASE_URL!;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 const supabase = createClient(supabaseUrl, supabaseServiceKey);
@@ -25,7 +32,7 @@ async function sendTelegramMessage(chatId: number | string, text: string): Promi
       })
     });
 
-    const data = await response.json();
+    const data = await response.json() as TelegramApiResponse;
     return { ok: data.ok, error: data.description };
   } catch (err: any) {
     return { ok: false, error: err.message };

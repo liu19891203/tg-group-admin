@@ -2,6 +2,13 @@ import { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
 import { pointsService } from '../services/pointsService';
 
+interface TelegramApiResponse<T = any> {
+  ok: boolean;
+  result?: T;
+  description?: string;
+  error_code?: number;
+}
+
 const supabaseUrl = process.env.SUPABASE_URL!;
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 const supabase = createClient(supabaseUrl, supabaseKey);
@@ -1038,13 +1045,13 @@ const handlers: Record<string, Handler> = {
       })
     });
     
-    const result = await response.json();
+    const result = await response.json() as TelegramApiResponse;
     res.json({ success: result.ok, data: result });
   },
 
   'GET /admin/webhook-info': async (req, res) => {
     const response = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/getWebhookInfo`);
-    const result = await response.json();
+    const result = await response.json() as TelegramApiResponse;
     res.json({ success: result.ok, data: result.result });
   },
 
@@ -1055,7 +1062,7 @@ const handlers: Record<string, Handler> = {
       body: JSON.stringify({ drop_pending_updates: true })
     });
     
-    const result = await response.json();
+    const result = await response.json() as TelegramApiResponse;
     res.json({ success: result.ok, data: result });
   }
 };
