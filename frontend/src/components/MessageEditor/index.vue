@@ -74,6 +74,7 @@
         
         <!-- 编辑框 -->
         <el-input
+          ref="messageInputRef"
           v-model="localMessage"
           type="textarea"
           :rows="rows"
@@ -359,7 +360,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, nextTick } from 'vue'
 import { ElMessage } from 'element-plus'
 import { 
   Plus, Delete, SemiSelect, Rank, Minus, Close, 
@@ -429,6 +430,7 @@ const localFooterText = ref(props.footerText)
 const localImageUrl = ref(props.imageUrl)
 const localInlineButtons = ref<InlineButton[]>([...props.inlineButtons])
 const localReplyButtons = ref<ReplyButton[]>([...props.replyButtons])
+const messageInputRef = ref<any>(null)
 
 // 默认变量
 const defaultVariables: Variable[] = [
@@ -529,12 +531,33 @@ const insertFormat = (type: string) => {
   localMessage.value += formats[type]
 }
 
-// 插入变量
+// 插入变量到光标位置
 const insertVariable = (key: string) => {
   const variable = availableVariables.value.find(v => v.key === key)
-  if (variable) {
+  if (!variable) return
+
+  // 获取 textarea 元素
+  const textarea = messageInputRef.value?.$el?.querySelector('textarea')
+  if (!textarea) {
+    // 如果无法获取 textarea，直接追加到末尾
     localMessage.value += variable.label
+    return
   }
+
+  const start = textarea.selectionStart
+  const end = textarea.selectionEnd
+  const text = localMessage.value || ''
+
+  // 在光标位置插入变量
+  const newText = text.substring(0, start) + variable.label + text.substring(end)
+  localMessage.value = newText
+
+  // 设置新的光标位置（在插入的变量之后）
+  nextTick(() => {
+    const newCursorPos = start + variable.label.length
+    textarea.focus()
+    textarea.setSelectionRange(newCursorPos, newCursorPos)
+  })
 }
 
 // 图片上传处理
