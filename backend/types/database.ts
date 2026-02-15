@@ -209,15 +209,36 @@ export interface WelcomeConfig {
   buttons?: InlineKeyboardButton[];
 }
 
+export interface InlineButton {
+  text: string;
+  callback_data: string;
+  action: 'callback' | 'url';
+  url?: string;
+}
+
+export interface ReplyButton {
+  text: string;
+}
+
 export interface VerificationConfig {
   enabled: boolean;
-  type: 'channel' | 'private' | 'captcha' | 'calculation' | 'gif';
-  channel_id?: number;
-  captcha_length?: number;
+  type: 'math' | 'image' | 'gif' | 'channel';
   timeout: number;
-  punishment: 'ban' | 'mute' | 'kick' | 'warn';
+  punishment: 'kick' | 'ban' | 'mute';
+  channel_id?: string;
+  difficulty?: number;
+  verification_message?: string;
+  success_message?: string;
+  verification_image_url?: string;
+  verification_image_file_id?: string;
+  success_image_url?: string;
+  success_image_file_id?: string;
+  verification_buttons?: InlineButton[];
+  success_buttons?: InlineButton[];
+  verification_reply_buttons?: ReplyButton[];
+  success_reply_buttons?: ReplyButton[];
   bypass_users?: number[];
-  questions?: CalculationQuestion[];
+  captcha_length?: number;
 }
 
 export interface CalculationQuestion {
@@ -288,6 +309,7 @@ export interface CryptoConfig {
   enabled: boolean;
   default_currency: string;
   price_channel?: number;
+  supported_chains?: string[];
 }
 
 export interface UserPoints {

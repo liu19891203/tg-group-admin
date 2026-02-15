@@ -6,6 +6,16 @@ import { antiSpamService } from '../../services/antiSpamService';
 import { adFilterService } from '../../services/adFilterService';
 import { autoDeleteService, AutoDeleteConfig } from '../../services/autoDeleteService';
 import { lotteryService } from '../../services/lotteryService';
+import { cryptoService } from '../../services/cryptoService';
+
+const ADDRESS_PATTERNS: Record<string, RegExp> = {
+  ERC20: /^0x[a-fA-F0-9]{40}$/,
+  TRC20: /^T[A-Za-z1-9]{33}$/,
+  BEP20: /^0x[a-fA-F0-9]{40}$/,
+  BEP2: /^bnb1[a-z0-9]{38}$/,
+  SOL: /^[1-9A-HJ-NP-Za-km-z]{32,44}$/,
+  BTC: /^[13][a-km-zA-HJ-NP-Z1-9]{25,34}$|^bc1[a-z0-9]{39,59}$/
+};
 
 const supabaseUrl = process.env.SUPABASE_URL!;
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -13,6 +23,8 @@ const supabase = createClient(supabaseUrl, supabaseKey);
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const WEB_URL = process.env.WEB_URL || 'https://tg-group-admin-frontend.vercel.app';
+
+const RATE_KEYWORDS = ['汇率', 'usdt', 'USDT', '价格', '行情', '汇率查询', '实时汇率'];
 
 interface TelegramUpdate {
   update_id: number;
@@ -534,6 +546,11 @@ async function handleCommand(chatId: number, userId: number | undefined, usernam
 
 // 处理群组消息（广告过滤、自动回复等）
 async function handleGroupMessage(message: any) {
+  console.log('=== handleGroupMessage ===');
+  console.log('Chat ID:', message.chat.id);
+  console.log('User ID:', message.from?.id);
+  console.log('Text:', message.text?.substring(0, 100));
+
   const chatId = message.chat.id;
   const userId = message.from?.id;
   const text = message.text || message.caption || '';
@@ -562,6 +579,76 @@ async function handleGroupMessage(message: any) {
 
     if (!config) {
       return;
+    }
+
+    // 检测汇率查询关键词
+    const cryptoConfig = config.crypto_config;
+    if (cryptoConfig?.enabled) {
+      const isRateQuery = RATE_KEYWORDS.some(keyword => text.includes(keyword));
+      
+      if (isRateQuery) {
+        try {
+          const rates = await cryptoService.getUsdtPrice();
+          
+          await callTelegramApi('sendMessage', {
+            chat_id: chatId,
+            text: `💰 <b>USDT/CNY 实时汇率</b>\n\n` +
+                  `💵 当前价格: ¥${rates.price.toFixed(4)}\n` +
+                  `📊 24h涨跌: ${rates.change24h >= 0 ? '+' : ''}${rates.change24h.toFixed(2)}%\n` +
+                  `🕐 更新时间: ${new Date().toLocaleString('zh-CN')}\n\n` +
+                  `<i>数据来源: ${rates.source}</i>`,
+            parse_mode: 'HTML'
+          });
+          return;
+        } catch (error) {
+          console.error('Get rate error:', error);
+          await callTelegramApi('sendMessage', {
+            chat_id: chatId,
+            text: '❌ 获取汇率失败，请稍后重试'
+          });
+        }
+      }
+    }
+
+    // 检测区块链地址
+    if (cryptoConfig?.enabled) {
+      const supportedChains = cryptoConfig.supported_chains || ['TRC20', 'ERC20'];
+      
+      for (const [chain, pattern] of Object.entries(ADDRESS_PATTERNS)) {
+        if (!supportedChains.includes(chain)) continue;
+        
+        const match = text.match(pattern);
+        if (match) {
+          try {
+            const chainLower = chain.toLowerCase();
+            const balanceInfo = await cryptoService.getAddressBalance(chainLower, match[0]);
+            
+            if (balanceInfo) {
+              await callTelegramApi('sendMessage', {
+                chat_id: chatId,
+                text: `🔍 <b>地址查询结果</b>\n\n` +
+                      `📍 链: ${chain}\n` +
+                      `📝 地址: <code>${match[0]}</code>\n` +
+                      `💰 余额: ${balanceInfo.balance} ${balanceInfo.symbol}\n` +
+                      `💵 价值: $${balanceInfo.usdt_price.toFixed(2)}`,
+                parse_mode: 'HTML'
+              });
+            } else {
+              await callTelegramApi('sendMessage', {
+                chat_id: chatId,
+                text: `🔍 <b>地址查询结果</b>\n\n` +
+                      `📍 链: ${chain}\n` +
+                      `📝 地址: <code>${match[0]}</code>\n` +
+                      `⚠️ 无法获取余额信息`,
+                parse_mode: 'HTML'
+              });
+            }
+            return;
+          } catch (error) {
+            console.error('Get address balance error:', error);
+          }
+        }
+      }
     }
 
     // 3. 刷屏检测
@@ -1081,6 +1168,11 @@ async function handleNewChatMember(update: TelegramUpdate) {
   const oldStatus = chatMember.old_chat_member?.status;
   const user = chatMember.new_chat_member.user;
 
+  console.log('=== handleNewChatMember START ===');
+  console.log('Chat:', { id: chat.id, title: chat.title, type: chat.type });
+  console.log('User:', { id: user.id, username: user.username, first_name: user.first_name });
+  console.log('Status:', { old: oldStatus, new: newStatus });
+
   console.log('Chat member update:', {
     chat_id: chat.id,
     chat_title: chat.title,
@@ -1153,6 +1245,8 @@ async function handleNewChatMember(update: TelegramUpdate) {
 
     const verificationConfig = config?.verification_config;
     
+    console.log('Verification config:', JSON.stringify(verificationConfig, null, 2));
+    
     if (!verificationConfig?.enabled) {
       console.log('Verification not enabled for group:', group.id);
       await sendWelcomeMessage(chat.id, group.id, user, group.title);
@@ -1173,6 +1267,8 @@ async function handleNewChatMember(update: TelegramUpdate) {
       },
       until_date: Math.floor(Date.now() / 1000) + 86400
     });
+
+    console.log('User restricted successfully');
 
     // 6. 创建验证记录
     const verifyId = crypto.randomUUID();
@@ -1215,8 +1311,46 @@ async function handleNewChatMember(update: TelegramUpdate) {
           }]]
         };
         break;
-      case 'math':
-        message = `🎉 欢迎 ${user.first_name} 加入群组！\n\n⚠️ 请完成验证：\n\n请计算：15 + 27 = ?\n\n请在私聊中输入答案\n⏰ ${Math.floor(timeout / 60)}分钟内有效`;
+      case 'math': {
+        const difficulty = verificationConfig.difficulty || 1;
+        const maxNum = 10 * difficulty;
+        const operators = difficulty >= 3 ? ['+', '-', '×'] : ['+', '-'];
+        const operator = operators[Math.floor(Math.random() * operators.length)];
+        const a = Math.floor(Math.random() * maxNum) + 1;
+        const b = Math.floor(Math.random() * maxNum) + 1;
+        let answer: number;
+        let question: string;
+
+        if (operator === '+') {
+          question = `${a} + ${b} = ?`;
+          answer = a + b;
+        } else if (operator === '-') {
+          question = `${a} - ${b} = ?`;
+          answer = a - b;
+        } else {
+          question = `${a} × ${b} = ?`;
+          answer = a * b;
+        }
+
+        await supabase
+          .from('verification_records')
+          .update({
+            challenge_data: {
+              verify_id: verifyId,
+              question,
+              correct_answer: String(answer)
+            }
+          })
+          .eq('id', record.id);
+
+        message = `🎉 欢迎 ${user.first_name} 加入群组！\n\n⚠️ 请完成验证：\n\n请计算：${question}\n\n请在私聊中输入答案\n⏰ ${Math.floor(timeout / 60)}分钟内有效`;
+        break;
+      }
+      case 'image':
+        message = `🎉 欢迎 ${user.first_name} 加入群组！\n\n⚠️ 请完成图片验证码验证\n⏰ ${Math.floor(timeout / 60)}分钟内有效`;
+        break;
+      case 'gif':
+        message = `🎉 欢迎 ${user.first_name} 加入群组！\n\n⚠️ 请识别 GIF 中的文字\n⏰ ${Math.floor(timeout / 60)}分钟内有效`;
         break;
       default:
         message = `🎉 欢迎 ${user.first_name} 加入群组！\n\n⚠️ 请完成验证\n⏰ ${Math.floor(timeout / 60)}分钟内有效`;
@@ -1228,7 +1362,8 @@ async function handleNewChatMember(update: TelegramUpdate) {
       reply_markup: keyboard
     });
 
-    console.log('Verification message sent to user:', user.id);
+    console.log('Verification message sent');
+    console.log('=== handleNewChatMember END ===');
 
   } catch (error) {
     console.error('Error handling new chat member:', error);
@@ -1410,6 +1545,10 @@ async function handleCallbackQuery(update: TelegramUpdate) {
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+  console.log('=== Webhook received ===');
+  console.log('Method:', req.method);
+  console.log('Body:', JSON.stringify(req.body, null, 2).substring(0, 500));
+
   res.setHeader('Access-Control-Allow-Origin', '*');
 
   if (req.method !== 'POST') {

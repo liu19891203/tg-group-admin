@@ -58,7 +58,7 @@ export const verificationService = {
       challengeData.channel_id = params.config.channel_id;
     }
 
-    if (params.type === 'captcha' || params.type === 'calculation' || params.type === 'gif') {
+    if (params.type === 'math' || params.type === 'image' || params.type === 'gif') {
       const challenge = this.generateChallenge(params.type, params.config);
       Object.assign(challengeData, challenge);
     }
@@ -83,7 +83,7 @@ export const verificationService = {
 
   generateChallenge(type: string, config?: VerificationConfig): Record<string, string> {
     switch (type) {
-      case 'captcha': {
+      case 'image': {
         const length = config?.captcha_length || 4;
         const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
         let code = '';
@@ -96,20 +96,25 @@ export const verificationService = {
         };
       }
 
-      case 'calculation': {
-        const operators = ['+', '-'];
+      case 'math': {
+        const difficulty = config?.difficulty || 1;
+        const maxNum = 10 * difficulty;
+        const operators = difficulty >= 3 ? ['+', '-', '*'] : ['+', '-'];
         const operator = operators[Math.floor(Math.random() * operators.length)];
-        const a = Math.floor(Math.random() * 50) + 10;
-        const b = Math.floor(Math.random() * 50) + 1;
+        const a = Math.floor(Math.random() * maxNum) + 1;
+        const b = Math.floor(Math.random() * maxNum) + 1;
         let answer: number;
         let question: string;
 
         if (operator === '+') {
           question = `${a} + ${b} = ?`;
           answer = a + b;
-        } else {
+        } else if (operator === '-') {
           question = `${a} - ${b} = ?`;
           answer = a - b;
+        } else {
+          question = `${a} × ${b} = ?`;
+          answer = a * b;
         }
 
         return { question, correct_answer: String(answer) };
@@ -149,7 +154,7 @@ export const verificationService = {
         };
         break;
 
-      case 'captcha':
+      case 'image':
         message = `🔐 请输入图片中的验证码：\n\n⏰ 5分钟内有效`;
         keyboard = {
           inline_keyboard: [[{
@@ -159,17 +164,13 @@ export const verificationService = {
         };
         break;
 
-      case 'calculation':
-        const question = record.challenge_data?.question || '请计算：';
-        message = `🧮 ${question}\n\n请在私聊中输入答案`;
+      case 'math':
+        const mathQuestion = record.challenge_data?.question || '请计算：';
+        message = `🧮 ${mathQuestion}\n\n请在私聊中输入答案`;
         break;
 
       case 'gif':
         message = `🎬 请识别 GIF 中的文字\n\n请在私聊中输入答案`;
-        break;
-
-      case 'private':
-        message = `📝 请私聊机器人完成验证`;
         break;
 
       default:

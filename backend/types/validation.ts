@@ -89,13 +89,37 @@ export const groupConfigSchema = {
 
   verification_config: z.object({
     enabled: z.boolean().default(false),
-    type: z.enum(['channel', 'private', 'captcha', 'calculation', 'gif'])
-      .default('channel'),
-    channel_id: z.number().optional(),
-    captcha_length: z.number().min(4).max(8).default(4),
+    type: z.enum(['math', 'image', 'gif', 'channel']).default('math'),
     timeout: z.number().min(60).max(1800).default(300),
-    punishment: z.enum(['ban', 'mute', 'kick', 'warn']).default('kick'),
-    bypass_users: z.array(z.number()).default([])
+    punishment: z.enum(['kick', 'ban', 'mute']).default('kick'),
+    channel_id: z.string().optional(),
+    difficulty: z.number().min(1).max(5).default(1),
+    verification_message: z.string().optional(),
+    success_message: z.string().optional(),
+    verification_image_url: z.string().optional(),
+    verification_image_file_id: z.string().optional(),
+    success_image_url: z.string().optional(),
+    success_image_file_id: z.string().optional(),
+    verification_buttons: z.array(z.object({
+      text: z.string(),
+      callback_data: z.string(),
+      action: z.enum(['callback', 'url']),
+      url: z.string().optional()
+    })).optional(),
+    success_buttons: z.array(z.object({
+      text: z.string(),
+      callback_data: z.string(),
+      action: z.enum(['callback', 'url']),
+      url: z.string().optional()
+    })).optional(),
+    verification_reply_buttons: z.array(z.object({
+      text: z.string()
+    })).optional(),
+    success_reply_buttons: z.array(z.object({
+      text: z.string()
+    })).optional(),
+    bypass_users: z.array(z.number()).default([]),
+    captcha_length: z.number().min(4).max(8).default(4)
   }),
 
   anti_ads_config: z.object({

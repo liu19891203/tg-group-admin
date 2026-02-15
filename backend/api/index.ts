@@ -1008,6 +1008,55 @@ const handlers: Record<string, Handler> = {
 
   'GET /admin/auth/me': async (req, res) => {
     res.json({ success: true, data: { id: 1, username: 'admin', role: 'super_admin' } });
+  },
+
+  'POST /admin/set-webhook': async (req, res) => {
+    const WEBHOOK_URL = process.env.WEBHOOK_URL || 'https://tg-group-admin.vercel.app/api/telegram/webhook';
+    
+    const response = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/setWebhook`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        url: WEBHOOK_URL,
+        allowed_updates: [
+          'message',
+          'edited_message',
+          'channel_post',
+          'edited_channel_post',
+          'inline_query',
+          'chosen_inline_result',
+          'callback_query',
+          'shipping_query',
+          'pre_checkout_query',
+          'poll',
+          'poll_answer',
+          'my_chat_member',
+          'chat_member',
+          'chat_join_request'
+        ],
+        drop_pending_updates: true
+      })
+    });
+    
+    const result = await response.json();
+    res.json({ success: result.ok, data: result });
+  },
+
+  'GET /admin/webhook-info': async (req, res) => {
+    const response = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/getWebhookInfo`);
+    const result = await response.json();
+    res.json({ success: result.ok, data: result.result });
+  },
+
+  'POST /admin/delete-webhook': async (req, res) => {
+    const response = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/deleteWebhook`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ drop_pending_updates: true })
+    });
+    
+    const result = await response.json();
+    res.json({ success: result.ok, data: result });
   }
 };
 
