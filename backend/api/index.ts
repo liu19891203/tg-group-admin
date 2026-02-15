@@ -1026,10 +1026,6 @@ const handlers: Record<string, Handler> = {
     res.json({ success: true, message: '密码修改成功' });
   },
 
-  'GET /admin/auth/me': async (req, res) => {
-    res.json({ success: true, data: { id: 1, username: 'admin', role: 'super_admin' } });
-  },
-
   'POST /admin/set-webhook': async (req, res) => {
     const WEBHOOK_URL = process.env.WEBHOOK_URL || 'https://tg-group-admin.vercel.app/api/telegram/webhook';
     

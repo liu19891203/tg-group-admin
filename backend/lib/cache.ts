@@ -95,15 +95,17 @@ class CacheManager {
       .single();
 
     if (!data && userInfo) {
+      const insertData: any = {
+        telegram_id: telegramId,
+        first_name: userInfo.first_name
+      };
+      if (userInfo.username) insertData.username = userInfo.username;
+      if (userInfo.last_name) insertData.last_name = userInfo.last_name;
+      if (userInfo.language_code) insertData.language_code = userInfo.language_code;
+      
       const { data: newUser, error } = await supabase
         .from('users')
-        .insert({
-          telegram_id: telegramId,
-          username: userInfo.username,
-          first_name: userInfo.first_name,
-          last_name: userInfo.last_name,
-          language_code: userInfo.language_code
-        })
+        .insert(insertData)
         .select()
         .single();
 
