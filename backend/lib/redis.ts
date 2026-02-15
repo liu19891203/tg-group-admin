@@ -4,35 +4,65 @@ import { Ratelimit } from '@upstash/ratelimit';
 const redisUrl = process.env.UPSTASH_REDIS_REST_URL;
 const redisToken = process.env.UPSTASH_REDIS_REST_TOKEN;
 
-if (!redisUrl || !redisToken) {
-  console.warn('Upstash Redis credentials not configured');
+let redis: Redis;
+let isRedisConfigured = false;
+
+if (redisUrl && redisToken) {
+  try {
+    redis = new Redis({
+      url: redisUrl,
+      token: redisToken
+    });
+    isRedisConfigured = true;
+    console.log('Redis configured successfully');
+  } catch (error) {
+    console.error('Failed to initialize Redis:', error);
+  }
 }
 
-export const redis = new Redis({
-  url: redisUrl || '',
-  token: redisToken || ''
-});
+if (!isRedisConfigured) {
+  console.warn('Upstash Redis credentials not configured, using in-memory fallback');
+  redis = new Redis({
+    url: 'https://localhost',
+    token: 'fallback'
+  });
+}
 
-export const ratelimit = new Ratelimit({
-  redis,
-  limiter: Ratelimit.slidingWindow(30, '10 s'),
-  analytics: true,
-  prefix: 'tgm'
-});
+export { redis, isRedisConfigured };
 
-export const groupRatelimit = new Ratelimit({
-  redis,
-  limiter: Ratelimit.slidingWindow(100, '1 m'),
-  analytics: true,
-  prefix: 'tgm:group'
-});
+let ratelimit: Ratelimit;
+let groupRatelimit: Ratelimit;
+let userRatelimit: Ratelimit;
 
-export const userRatelimit = new Ratelimit({
-  redis,
-  limiter: Ratelimit.slidingWindow(20, '1 m'),
-  analytics: true,
-  prefix: 'tgm:user'
-});
+try {
+  ratelimit = new Ratelimit({
+    redis,
+    limiter: Ratelimit.slidingWindow(30, '10 s'),
+    analytics: true,
+    prefix: 'tgm'
+  });
+
+  groupRatelimit = new Ratelimit({
+    redis,
+    limiter: Ratelimit.slidingWindow(100, '1 m'),
+    analytics: true,
+    prefix: 'tgm:group'
+  });
+
+  userRatelimit = new Ratelimit({
+    redis,
+    limiter: Ratelimit.slidingWindow(20, '1 m'),
+    analytics: true,
+    prefix: 'tgm:user'
+  });
+} catch (error) {
+  console.error('Failed to initialize Ratelimit:', error);
+  ratelimit = null as any;
+  groupRatelimit = null as any;
+  userRatelimit = null as any;
+}
+
+export { ratelimit, groupRatelimit, userRatelimit };
 
 export async function cacheSet(key: string, value: string | number | object, ttlSeconds?: number): Promise<void> {
   const serialized = typeof value === 'string' ? value : JSON.stringify(value);
