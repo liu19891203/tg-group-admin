@@ -1,5 +1,11 @@
 import { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
+import { pointsService } from '../../services/pointsService';
+import { cacheManager } from '../../lib/cache';
+import { antiSpamService } from '../../services/antiSpamService';
+import { adFilterService } from '../../services/adFilterService';
+import { autoDeleteService, AutoDeleteConfig } from '../../services/autoDeleteService';
+import { lotteryService } from '../../services/lotteryService';
 
 const supabaseUrl = process.env.SUPABASE_URL!;
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -47,6 +53,252 @@ async function sendMessage(chatId: number, text: string) {
     text: text,
     parse_mode: 'HTML'
   });
+}
+
+interface WelcomeConfig {
+  enabled: boolean;
+  message: string;
+  type: 'text' | 'image' | 'button' | 'rich';
+  delete_after?: number;
+  buttons?: Array<{
+    text: string;
+    url?: string;
+    callback_data?: string;
+  }>;
+}
+
+interface SensitiveWordsConfig {
+  enabled: boolean;
+  words: string[];
+  regex_patterns: string[];
+  action: 'delete' | 'warn' | 'mute' | 'kick' | 'ban';
+  notify_admin: boolean;
+  admin_notify_chat_id?: number;
+  warn_message?: string;
+}
+
+async function sendWelcomeMessage(
+  chatId: number,
+  groupId: string,
+  user: { id: number; first_name: string; username?: string },
+  groupTitle: string
+): Promise<void> {
+  try {
+    const { data: config } = await supabase
+      .from('group_configs')
+      .select('welcome_config')
+      .eq('group_id', groupId)
+      .single();
+
+    const welcomeConfig = config?.welcome_config as WelcomeConfig | undefined;
+
+    if (!welcomeConfig?.enabled) {
+      console.log('Welcome message not enabled for group:', groupId);
+      return;
+    }
+
+    let welcomeMessage = welcomeConfig.message
+      .replace(/{user_name}/g, user.first_name)
+      .replace(/{user_id}/g, user.id.toString())
+      .replace(/{group_name}/g, groupTitle)
+      .replace(/{mention}/g, user.username ? `@${user.username}` : user.first_name);
+
+    const keyboard = welcomeConfig.buttons && welcomeConfig.buttons.length > 0
+      ? { inline_keyboard: [welcomeConfig.buttons] }
+      : undefined;
+
+    const result = await callTelegramApi('sendMessage', {
+      chat_id: chatId,
+      text: welcomeMessage,
+      parse_mode: 'HTML',
+      reply_markup: keyboard
+    });
+
+    if (welcomeConfig.delete_after && welcomeConfig.delete_after > 0 && result?.result?.message_id) {
+      setTimeout(async () => {
+        try {
+          await callTelegramApi('deleteMessage', {
+            chat_id: chatId,
+            message_id: result.result.message_id
+          });
+        } catch (e) {
+          console.error('Failed to delete welcome message:', e);
+        }
+      }, welcomeConfig.delete_after * 1000);
+    }
+
+    console.log('Welcome message sent to user:', user.id);
+  } catch (error) {
+    console.error('Error sending welcome message:', error);
+  }
+}
+
+interface SensitiveCheckResult {
+  hasSensitive: boolean;
+  matchedWord?: string;
+  matchedPattern?: string;
+}
+
+async function checkSensitiveWords(
+  text: string,
+  config: SensitiveWordsConfig
+): Promise<SensitiveCheckResult> {
+  if (!config.enabled) {
+    return { hasSensitive: false };
+  }
+
+  if (config.words && config.words.length > 0) {
+    const lowerText = text.toLowerCase();
+    for (const word of config.words) {
+      if (lowerText.includes(word.toLowerCase())) {
+        return { hasSensitive: true, matchedWord: word };
+      }
+    }
+  }
+
+  if (config.regex_patterns && config.regex_patterns.length > 0) {
+    for (const pattern of config.regex_patterns) {
+      try {
+        const regex = new RegExp(pattern, 'i');
+        if (regex.test(text)) {
+          return { hasSensitive: true, matchedPattern: pattern };
+        }
+      } catch (error) {
+        console.error('Invalid sensitive word regex pattern:', pattern, error);
+      }
+    }
+  }
+
+  return { hasSensitive: false };
+}
+
+async function handleSensitiveWordViolation(
+  message: any,
+  config: SensitiveWordsConfig,
+  group: { id: string; title: string },
+  checkResult: SensitiveCheckResult
+): Promise<boolean> {
+  const chatId = message.chat.id;
+  const userId = message.from?.id;
+  const text = message.text || message.caption || '';
+  const username = message.from?.username || message.from?.first_name || '用户';
+
+  console.log('Sensitive word detected:', {
+    chatId,
+    userId,
+    matchedWord: checkResult.matchedWord,
+    matchedPattern: checkResult.matchedPattern,
+    action: config.action
+  });
+
+  switch (config.action) {
+    case 'delete':
+      await callTelegramApi('deleteMessage', {
+        chat_id: chatId,
+        message_id: message.message_id
+      });
+      break;
+
+    case 'warn':
+      await callTelegramApi('deleteMessage', {
+        chat_id: chatId,
+        message_id: message.message_id
+      });
+      const warnMessage = config.warn_message || '⚠️ 您的消息包含敏感词，已被删除。';
+      await callTelegramApi('sendMessage', {
+        chat_id: chatId,
+        text: `${warnMessage}\n\n@${username}`,
+        parse_mode: 'HTML'
+      });
+      break;
+
+    case 'mute':
+      await callTelegramApi('deleteMessage', {
+        chat_id: chatId,
+        message_id: message.message_id
+      });
+      await callTelegramApi('restrictChatMember', {
+        chat_id: chatId,
+        user_id: userId,
+        permissions: {
+          can_send_messages: false,
+          can_send_media_messages: false,
+          can_send_other_messages: false,
+          can_add_web_page_previews: false
+        },
+        until_date: Math.floor(Date.now() / 1000) + 3600
+      });
+      await callTelegramApi('sendMessage', {
+        chat_id: chatId,
+        text: `🔇 用户 @${username} 因发送敏感词已被禁言1小时`,
+        parse_mode: 'HTML'
+      });
+      break;
+
+    case 'kick':
+      await callTelegramApi('deleteMessage', {
+        chat_id: chatId,
+        message_id: message.message_id
+      });
+      await callTelegramApi('kickChatMember', {
+        chat_id: chatId,
+        user_id: userId
+      });
+      await callTelegramApi('sendMessage', {
+        chat_id: chatId,
+        text: `🚫 用户 @${username} 因发送敏感词已被踢出群组`,
+        parse_mode: 'HTML'
+      });
+      break;
+
+    case 'ban':
+      await callTelegramApi('deleteMessage', {
+        chat_id: chatId,
+        message_id: message.message_id
+      });
+      await callTelegramApi('banChatMember', {
+        chat_id: chatId,
+        user_id: userId
+      });
+      await callTelegramApi('sendMessage', {
+        chat_id: chatId,
+        text: `⛔ 用户 @${username} 因发送敏感词已被永久封禁`,
+        parse_mode: 'HTML'
+      });
+      break;
+  }
+
+  if (config.notify_admin && config.admin_notify_chat_id) {
+    const matchedInfo = checkResult.matchedWord 
+      ? `敏感词: ${checkResult.matchedWord}`
+      : `正则匹配: ${checkResult.matchedPattern}`;
+    
+    await callTelegramApi('sendMessage', {
+      chat_id: config.admin_notify_chat_id,
+      text: `⚠️ <b>敏感词检测</b>\n\n` +
+        `👤 用户: @${username} (ID: ${userId})\n` +
+        `📍 群组: ${group.title}\n` +
+        `🔧 处理: ${config.action}\n` +
+        `📝 ${matchedInfo}\n` +
+        `💬 消息: ${text.substring(0, 200)}${text.length > 200 ? '...' : ''}`,
+      parse_mode: 'HTML'
+    });
+  }
+
+  await supabase.from('operation_logs').insert({
+    admin_id: 'system',
+    action: `sensitive_words:${config.action}`,
+    target_type: 'user',
+    target_id: userId?.toString(),
+    new_value: {
+      group_id: group.id,
+      matched_word: checkResult.matchedWord,
+      matched_pattern: checkResult.matchedPattern,
+      message_text: text.substring(0, 500)
+    }
+  });
+
+  return true;
 }
 
 async function handleBotAddedToGroup(update: TelegramUpdate) {
@@ -161,10 +413,25 @@ async function handleBotAddedToGroup(update: TelegramUpdate) {
   }
 }
 
-async function handleCommand(chatId: number, userId: number | undefined, username: string, text: string): Promise<boolean> {
-  const command = text.split(' ')[0].toLowerCase();
+interface CommandsConfig {
+  enabled: boolean;
+  auto_delete_all: boolean;
+  admin_commands: Array<{
+    command: string;
+    enabled: boolean;
+    auto_delete: boolean;
+    response?: string;
+  }>;
+  user_commands: Array<{
+    command: string;
+    enabled: boolean;
+    auto_delete: boolean;
+    response?: string;
+  }>;
+}
 
-  const commands: Record<string, string> = {
+function getDefaultResponse(command: string, username: string): string {
+  const defaultResponses: Record<string, string> = {
     '/start': `👋 你好，${username}！\n\n我是 Telegram 群管机器人。\n\n📌 可用命令：\n/help - 查看帮助\n/checkin - 每日签到\n/me - 查看个人信息\n/rank - 查看排行榜`,
     '/help': `🤖 <b>机器人命令帮助</b>\n\n<b>用户命令</b>\n/start - 开始使用\n/help - 查看帮助\n/checkin - 每日签到\n/me - 个人信息\n/rank - 排行榜\n\n<b>管理命令</b>\n/reload - 刷新管理员\n/config - 配置面板`,
     '/checkin': `✅ <b>签到成功！</b>\n\n👤 用户：${username}\n💰 获得积分：+${Math.floor(Math.random() * 20) + 10}\n🔥 连续签到：${Math.floor(Math.random() * 30) + 1} 天`,
@@ -173,13 +440,95 @@ async function handleCommand(chatId: number, userId: number | undefined, usernam
     '/reload': `✅ 群组信息已刷新！`,
     '/config': `⚙️ <b>群组配置</b>\n\n请访问管理后台：\n${WEB_URL}`
   };
+  return defaultResponses[command] || `❓ 未知命令: ${command}`;
+}
 
-  const response = commands[command];
-  if (response) {
-    await sendMessage(chatId, response);
+async function handleCommand(chatId: number, userId: number | undefined, username: string, text: string): Promise<boolean> {
+  const command = text.split(' ')[0].toLowerCase();
+
+  if (!userId) {
+    await sendMessage(chatId, '❌ 无法识别用户信息');
     return true;
   }
-  // 未知命令不回复
+
+  if (command === '/start') {
+    await sendMessage(chatId, `👋 你好，${username}！\n\n我是 Telegram 群管机器人。\n\n📌 可用命令：\n/help - 查看帮助\n/checkin - 每日签到\n/me - 查看个人信息\n/rank - 查看排行榜`);
+    return true;
+  }
+
+  if (command === '/help') {
+    await sendMessage(chatId, `🤖 <b>机器人命令帮助</b>\n\n<b>用户命令</b>\n/start - 开始使用\n/help - 查看帮助\n/checkin - 每日签到\n/me - 个人信息\n/rank - 排行榜\n\n<b>管理命令</b>\n/reload - 刷新管理员\n/config - 配置面板`);
+    return true;
+  }
+
+  const { data: group } = await supabase
+    .from('groups')
+    .select('id')
+    .eq('chat_id', chatId)
+    .single();
+
+  if (!group) {
+    await sendMessage(chatId, '❌ 当前群组未注册，请先添加机器人到群组');
+    return true;
+  }
+
+  const groupId = group.id;
+
+  if (command === '/checkin') {
+    try {
+      const result = await pointsService.checkin(userId, groupId);
+      await sendMessage(chatId, `✅ <b>签到成功！</b>\n\n👤 用户：${username}\n💰 获得积分：+${result.points}\n🔥 连续签到：${result.streak} 天${result.bonus > 0 ? `\n🎁 连续签到奖励：+${result.bonus}` : ''}`);
+    } catch (error: any) {
+      if (error.message === '今日已签到') {
+        const stats = await pointsService.getUserStats(userId, groupId);
+        await sendMessage(chatId, `⚠️ 今日已签到\n\n👤 用户：${username}\n🔥 连续签到：${stats.streak} 天\n💰 当前积分：${stats.points}`);
+      } else {
+        await sendMessage(chatId, `❌ 签到失败：${error.message}`);
+      }
+    }
+    return true;
+  }
+
+  if (command === '/me') {
+    try {
+      const stats = await pointsService.getUserStats(userId, groupId);
+      await sendMessage(chatId, `📊 <b>个人信息</b>\n\n👤 用户：${username}\n💰 当前积分：${stats.points}\n📈 累计积分：${stats.totalPoints}\n🏆 排名：#${stats.rank}\n🔥 连续签到：${stats.streak} 天\n✅ 签到次数：${stats.checkinCount}`);
+    } catch (error: any) {
+      await sendMessage(chatId, `📊 <b>个人信息</b>\n\n👤 用户：${username}\n💰 当前积分：0\n🏆 排名：-`);
+    }
+    return true;
+  }
+
+  if (command === '/rank') {
+    try {
+      const leaderboard = await pointsService.getLeaderboard(groupId, 'total', 10);
+      if (leaderboard.length === 0) {
+        await sendMessage(chatId, `🏆 <b>积分排行榜</b>\n\n暂无数据`);
+        return true;
+      }
+      const medals = ['🥇', '🥈', '🥉'];
+      const rankText = leaderboard.map((entry, index) => {
+        const medal = index < 3 ? medals[index] : `${index + 1}.`;
+        const displayName = entry.displayName || entry.username || `用户${entry.telegramId}`;
+        return `${medal} ${displayName} - ${entry.points.toLocaleString()} 积分`;
+      }).join('\n');
+      await sendMessage(chatId, `🏆 <b>积分排行榜</b>\n\n${rankText}`);
+    } catch (error: any) {
+      await sendMessage(chatId, `❌ 获取排行榜失败：${error.message}`);
+    }
+    return true;
+  }
+
+  if (command === '/reload') {
+    await sendMessage(chatId, `✅ 群组信息已刷新！`);
+    return true;
+  }
+
+  if (command === '/config') {
+    await sendMessage(chatId, `⚙️ <b>群组配置</b>\n\n请访问管理后台：\n${WEB_URL}`);
+    return true;
+  }
+
   return false;
 }
 
@@ -215,27 +564,80 @@ async function handleGroupMessage(message: any) {
       return;
     }
 
-    // 3. 检查广告过滤
-    if (config.ad_filter_enabled) {
-      const adKeywords = ['广告', '推广', '加群', '加微信', '二维码', '免费领', '兼职', '赚钱'];
-      const hasAd = adKeywords.some(keyword => text.includes(keyword));
+    // 3. 刷屏检测
+    const spamConfig = config.anti_spam_config;
+    if (spamConfig?.enabled && userId) {
+      const spamResult = await antiSpamService.check(userId, chatId, text, spamConfig);
       
-      if (hasAd) {
-        console.log('Ad detected, deleting message:', message.message_id);
-        await callTelegramApi('deleteMessage', {
-          chat_id: chatId,
-          message_id: message.message_id
+      if (spamResult.isSpam) {
+        console.log('Spam detected:', {
+          userId,
+          chatId,
+          reason: spamResult.reason,
+          messageCount: spamResult.messageCount,
+          duplicateCount: spamResult.duplicateCount
         });
         
-        await callTelegramApi('sendMessage', {
-          chat_id: chatId,
-          text: `⚠️ @${message.from?.username || message.from?.first_name} 的消息包含广告内容，已被删除。`
-        });
+        await antiSpamService.punish(message, spamResult, spamConfig);
         return;
       }
     }
 
-    // 4. 检查自动回复
+    // 4. 敏感词检测
+    const sensitiveWordsConfig = config.sensitive_words_config as SensitiveWordsConfig;
+    if (sensitiveWordsConfig?.enabled) {
+      const sensitiveResult = await checkSensitiveWords(text, sensitiveWordsConfig);
+      
+      if (sensitiveResult.hasSensitive) {
+        console.log('Sensitive word detected:', {
+          userId,
+          chatId,
+          matchedWord: sensitiveResult.matchedWord,
+          matchedPattern: sensitiveResult.matchedPattern
+        });
+        
+        await handleSensitiveWordViolation(message, sensitiveWordsConfig, group, sensitiveResult);
+        return;
+      }
+    }
+
+    // 5. 检查广告过滤
+    const antiAdsConfig = config.anti_ads_config;
+    if (antiAdsConfig?.enabled && userId) {
+      const adsResult = await adFilterService.check(text, antiAdsConfig, message, userId);
+      
+      if (adsResult.isAds) {
+        console.log('Ad detected:', {
+          userId,
+          chatId,
+          type: adsResult.type,
+          matchedKeyword: adsResult.matchedKeyword
+        });
+        
+        const punishmentResult = await adFilterService.punish(message, adsResult, antiAdsConfig, group.id);
+        
+        if (punishmentResult.action === 'kicked') {
+          await callTelegramApi('kickChatMember', {
+            chat_id: chatId,
+            user_id: userId
+          });
+        }
+        
+        return;
+      }
+    }
+
+    // 6. 检查自动删除
+    const autoDeleteConfig = config.auto_delete_config as AutoDeleteConfig;
+    if (autoDeleteConfig?.enabled) {
+      try {
+        await autoDeleteService.handleAutoDelete(message, autoDeleteConfig);
+      } catch (error) {
+        console.error('Error in auto delete:', error);
+      }
+    }
+
+    // 7. 检查自动回复
     if (config.auto_reply_enabled) {
       const { data: rules } = await supabase
         .from('auto_reply_rules')
@@ -262,8 +664,23 @@ async function handleGroupMessage(message: any) {
       }
     }
 
-    // 5. 更新用户积分
-    if (config.points_enabled) {
+    // 8. 更新用户积分
+    if (config.points_enabled && userId && text) {
+      try {
+        const pointsConfig = config.points_config || {
+          enabled: true,
+          daily_limit: 100,
+          per_message: 0.2,
+          checkin_base: 10,
+          checkin_bonus: [2, 5, 10, 20],
+          keyword_pattern: '[\\u4e00-\\u9fa5]{5,}'
+        };
+        await pointsService.processMessage(userId, group.id, text, pointsConfig);
+        console.log('Points processed for user:', userId);
+      } catch (error) {
+        console.error('Error processing message points:', error);
+      }
+
       const { data: userData } = await supabase
         .from('users')
         .select('id')
@@ -276,7 +693,6 @@ async function handleGroupMessage(message: any) {
           .upsert({
             group_id: group.id,
             user_id: userData.id,
-            message_count: supabase.rpc('increment', { x: 1 }),
             last_message_at: new Date().toISOString()
           }, {
             onConflict: 'group_id,user_id'
@@ -284,8 +700,85 @@ async function handleGroupMessage(message: any) {
       }
     }
 
+    // 9. 收集统计数据
+    await collectMessageStats(group.id, userId, text, message);
+
   } catch (error) {
     console.error('Error handling group message:', error);
+  }
+}
+
+async function collectMessageStats(groupId: string, userId: number | undefined, text: string, message: any) {
+  if (!userId) return;
+
+  try {
+    const today = new Date().toISOString().split('T')[0];
+
+    const { data: userData } = await supabase
+      .from('users')
+      .select('id')
+      .eq('telegram_id', userId)
+      .single();
+
+    if (!userData) return;
+
+    const { error: statsError } = await supabase.rpc('record_message_stats', {
+      p_group_id: groupId,
+      p_user_id: userData.id,
+      p_date: today
+    });
+
+    if (statsError) {
+      console.error('Error recording message stats:', statsError);
+      
+      await supabase
+        .from('chat_stats')
+        .upsert({
+          group_id: groupId,
+          date: today,
+          total_messages: 1,
+          active_users: 1
+        }, {
+          onConflict: 'group_id,date'
+        });
+    }
+
+    await trackInviteFromMessage(groupId, userData.id, text);
+
+    console.log('Stats collected for user:', userId, 'in group:', groupId);
+
+  } catch (error) {
+    console.error('Error collecting message stats:', error);
+  }
+}
+
+async function trackInviteFromMessage(groupId: string, userId: string, text: string) {
+  const inviteLinkPattern = /(?:https?:\/\/)?t\.me\/\+([a-zA-Z0-9_-]+)|(?:https?:\/\/)?t\.me\/joinchat\/([a-zA-Z0-9_-]+)/gi;
+  const matches = text.match(inviteLinkPattern);
+
+  if (!matches) return;
+
+  for (const link of matches) {
+    try {
+      const { data: existingLink } = await supabase
+        .from('user_invite_links')
+        .select('user_id, invite_code')
+        .eq('group_id', groupId)
+        .eq('invite_link', link)
+        .single();
+
+      if (existingLink && existingLink.user_id !== userId) {
+        console.log('Invite link shared by user:', userId, 'link owner:', existingLink.user_id);
+        
+        await supabase.rpc('update_invite_stats', {
+          p_group_id: groupId,
+          p_user_id: existingLink.user_id,
+          p_increment: 1
+        });
+      }
+    } catch (error) {
+      console.log('No matching invite link found for:', link);
+    }
   }
 }
 
@@ -358,6 +851,25 @@ ${WEB_URL}`
           text: '✅ 验证成功！欢迎加入群组！'
         });
 
+        const { data: groupData } = await supabase
+          .from('groups')
+          .select('id, title')
+          .eq('chat_id', record.groups.chat_id)
+          .single();
+
+        if (groupData) {
+          await sendWelcomeMessage(
+            record.groups.chat_id,
+            groupData.id,
+            {
+              id: userId!,
+              first_name: message.from?.first_name || 'User',
+              username: message.from?.username
+            },
+            groupData.title
+          );
+        }
+
         console.log('User verified successfully:', userId);
       } else {
         // 答案错误
@@ -388,6 +900,176 @@ ${WEB_URL}`
 
   } catch (error) {
     console.error('Error handling private message:', error);
+  }
+}
+
+async function handleLotteryParticipate(
+  callbackQuery: any,
+  lotteryId: string,
+  userId: number,
+  chatId: number | undefined
+) {
+  try {
+    const username = callbackQuery.from.username || callbackQuery.from.first_name;
+
+    const result = await lotteryService.joinLottery(lotteryId, userId, { username });
+
+    if (result.success) {
+      await callTelegramApi('answerCallbackQuery', {
+        callback_query_id: callbackQuery.id,
+        text: `✅ ${result.message}`,
+        show_alert: false
+      });
+
+      const { data: lottery } = await supabase
+        .from('lotteries')
+        .select('participant_count, ticket_count')
+        .eq('id', lotteryId)
+        .single();
+
+      if (lottery && chatId && callbackQuery.message?.message_id) {
+        const originalText = callbackQuery.message.text || '';
+        const updatedText = originalText.replace(
+          /👥 参与人数：\d+/,
+          `👥 参与人数：${lottery.participant_count}`
+        );
+
+        await callTelegramApi('editMessageText', {
+          chat_id: chatId,
+          message_id: callbackQuery.message.message_id,
+          text: updatedText,
+          parse_mode: 'HTML',
+          reply_markup: callbackQuery.message.reply_markup
+        });
+      }
+    } else {
+      await callTelegramApi('answerCallbackQuery', {
+        callback_query_id: callbackQuery.id,
+        text: `❌ ${result.message}`,
+        show_alert: true
+      });
+    }
+  } catch (error) {
+    console.error('Error handling lottery participate:', error);
+    await callTelegramApi('answerCallbackQuery', {
+      callback_query_id: callbackQuery.id,
+      text: '❌ 参与失败，请稍后重试',
+      show_alert: true
+    });
+  }
+}
+
+async function handleLotteryDraw(
+  callbackQuery: any,
+  lotteryId: string,
+  userId: number,
+  chatId: number | undefined
+) {
+  try {
+    const { data: group } = await supabase
+      .from('groups')
+      .select('id')
+      .eq('chat_id', chatId)
+      .single();
+
+    if (!group) {
+      await callTelegramApi('answerCallbackQuery', {
+        callback_query_id: callbackQuery.id,
+        text: '❌ 群组未注册',
+        show_alert: true
+      });
+      return;
+    }
+
+    const { data: userData } = await supabase
+      .from('users')
+      .select('id')
+      .eq('telegram_id', userId)
+      .single();
+
+    if (!userData) {
+      await callTelegramApi('answerCallbackQuery', {
+        callback_query_id: callbackQuery.id,
+        text: '❌ 用户未注册',
+        show_alert: true
+      });
+      return;
+    }
+
+    const { data: adminRecord } = await supabase
+      .from('group_administrators')
+      .select('*')
+      .eq('group_id', group.id)
+      .eq('user_id', userData.id)
+      .single();
+
+    if (!adminRecord) {
+      await callTelegramApi('answerCallbackQuery', {
+        callback_query_id: callbackQuery.id,
+        text: '❌ 只有管理员可以开奖',
+        show_alert: true
+      });
+      return;
+    }
+
+    const result = await lotteryService.drawLottery(lotteryId, userId.toString());
+
+    if (!result.success) {
+      await callTelegramApi('answerCallbackQuery', {
+        callback_query_id: callbackQuery.id,
+        text: '❌ 开奖失败：无人参与或抽奖不存在',
+        show_alert: true
+      });
+      return;
+    }
+
+    await callTelegramApi('answerCallbackQuery', {
+      callback_query_id: callbackQuery.id,
+      text: `✅ 开奖成功！共 ${result.winners.length} 位中奖者`,
+      show_alert: false
+    });
+
+    const lottery = await lotteryService.getLottery(lotteryId);
+    if (!lottery || !chatId) return;
+
+    let winnerText = `🎉 <b>抽奖结果公布</b>\n\n`;
+    winnerText += `🏆 <b>奖品：</b>${lottery.prize}\n\n`;
+    winnerText += `🥇 <b>中奖者：</b>\n`;
+
+    for (let i = 0; i < result.winners.length; i++) {
+      const winner = result.winners[i];
+      const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}.`;
+      const displayName = winner.username || `用户${winner.telegramId}`;
+      winnerText += `${medal} ${displayName}\n`;
+
+      try {
+        await callTelegramApi('sendMessage', {
+          chat_id: winner.telegramId,
+          text: `🎉 <b>恭喜您中奖了！</b>\n\n🏆 奖品：${lottery.prize}\n\n请联系群管理员领取奖品。`,
+          parse_mode: 'HTML'
+        });
+      } catch (notifyError) {
+        console.error('Failed to notify winner:', winner.telegramId, notifyError);
+      }
+    }
+
+    winnerText += `\n👥 共有 ${result.participantCount} 人参与`;
+
+    await callTelegramApi('editMessageText', {
+      chat_id: chatId,
+      message_id: callbackQuery.message?.message_id,
+      text: winnerText,
+      parse_mode: 'HTML'
+    });
+
+    console.log('Lottery draw completed:', { lotteryId, winnerCount: result.winners.length });
+  } catch (error) {
+    console.error('Error handling lottery draw:', error);
+    await callTelegramApi('answerCallbackQuery', {
+      callback_query_id: callbackQuery.id,
+      text: '❌ 开奖失败，请稍后重试',
+      show_alert: true
+    });
   }
 }
 
@@ -473,6 +1155,7 @@ async function handleNewChatMember(update: TelegramUpdate) {
     
     if (!verificationConfig?.enabled) {
       console.log('Verification not enabled for group:', group.id);
+      await sendWelcomeMessage(chat.id, group.id, user, group.title);
       return;
     }
 
@@ -561,6 +1244,18 @@ async function handleCallbackQuery(update: TelegramUpdate) {
   const chatId = callbackQuery.message?.chat?.id;
 
   console.log('Callback query:', { data, userId, chatId });
+
+  if (data?.startsWith('lottery_participate:')) {
+    const lotteryId = data.split(':')[1];
+    await handleLotteryParticipate(callbackQuery, lotteryId, userId, chatId);
+    return;
+  }
+
+  if (data?.startsWith('lottery_draw:')) {
+    const lotteryId = data.split(':')[1];
+    await handleLotteryDraw(callbackQuery, lotteryId, userId, chatId);
+    return;
+  }
 
   if (!data?.startsWith('verify_channel:')) {
     return;
@@ -655,6 +1350,25 @@ async function handleCallbackQuery(update: TelegramUpdate) {
           message_id: messageId,
           text: '✅ 验证成功！欢迎加入！'
         });
+      }
+
+      const { data: groupData } = await supabase
+        .from('groups')
+        .select('id, title')
+        .eq('id', record.group_id)
+        .single();
+
+      if (groupData) {
+        await sendWelcomeMessage(
+          chatId!,
+          groupData.id,
+          {
+            id: userId,
+            first_name: callbackQuery.from.first_name,
+            username: callbackQuery.from.username
+          },
+          groupData.title
+        );
       }
 
       console.log('User verified successfully:', userId);

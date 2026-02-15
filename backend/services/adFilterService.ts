@@ -22,10 +22,17 @@ export const adFilterService = {
   async check(
     text: string,
     config: AntiAdsConfig,
-    message?: TelegramMessage
+    message?: TelegramMessage,
+    userId?: number
   ): Promise<AdsCheckResult> {
     if (!config.enabled) {
       return { isAds: false, type: 'none', confidence: 0 };
+    }
+
+    if (config.whitelist_users?.length > 0 && userId) {
+      if (config.whitelist_users.includes(userId)) {
+        return { isAds: false, type: 'whitelist', confidence: 0 };
+      }
     }
 
     const result: AdsCheckResult = {
@@ -48,6 +55,13 @@ export const adFilterService = {
       }
     }
 
+    if (config.regex_patterns?.length > 0) {
+      const regexCheck = this.checkRegexAds(text, config.regex_patterns);
+      if (regexCheck.isAds) {
+        return regexCheck;
+      }
+    }
+
     if (config.link_ads) {
       const linkCheck = this.checkLinkAds(text);
       if (linkCheck.isAds) {
@@ -56,6 +70,26 @@ export const adFilterService = {
     }
 
     return result;
+  },
+
+  checkRegexAds(text: string, patterns: string[]): AdsCheckResult {
+    for (const pattern of patterns) {
+      try {
+        const regex = new RegExp(pattern, 'i');
+        if (regex.test(text)) {
+          return {
+            isAds: true,
+            type: 'regex_ad',
+            matchedKeyword: pattern,
+            confidence: 0.85
+          };
+        }
+      } catch (error) {
+        console.error('Invalid regex pattern:', pattern, error);
+      }
+    }
+
+    return { isAds: false, type: 'none', confidence: 0 };
   },
 
   checkStickerAds(message?: TelegramMessage): AdsCheckResult {
@@ -137,19 +171,25 @@ export const adFilterService = {
   ): Promise<PunishmentResult> {
     const chatId = message.chat.id;
     const userId = message.from?.id;
+    const deleteOriginal = config.delete_original !== false;
+    const warnMessage = config.warn_message || '⚠️ 您的消息包含广告内容，已被删除。';
 
     switch (config.punishment) {
       case 'delete':
-        await deleteMessage(chatId, message.message_id);
+        if (deleteOriginal) {
+          await deleteMessage(chatId, message.message_id);
+        }
         await this.logViolation(groupId, userId, result, 'delete');
         return { action: 'deleted' };
 
       case 'warn':
-        await deleteMessage(chatId, message.message_id);
+        if (deleteOriginal) {
+          await deleteMessage(chatId, message.message_id);
+        }
         const warnCount = await this.incrementWarnCount(userId, groupId);
 
         await sendMessage(chatId, 
-          `⚠️ 检测到广告内容，已删除\n\n@${message.from?.username || '用户'} 第 ${warnCount} 次警告\n连续 ${config.warn_limit} 次警告将被踢出`
+          `${warnMessage}\n\n@${message.from?.username || '用户'} 第 ${warnCount} 次警告\n连续 ${config.warn_limit} 次警告将被踢出`
         );
 
         if (warnCount >= config.warn_limit) {
@@ -161,12 +201,23 @@ export const adFilterService = {
         return { action: 'warned', warnCount };
 
       case 'mute':
-        await deleteMessage(chatId, message.message_id);
+        if (deleteOriginal) {
+          await deleteMessage(chatId, message.message_id);
+        }
         await this.logViolation(groupId, userId, result, 'mute');
         return { action: 'muted' };
 
+      case 'kick':
+        if (deleteOriginal) {
+          await deleteMessage(chatId, message.message_id);
+        }
+        await this.logViolation(groupId, userId, result, 'kick');
+        return { action: 'kicked' };
+
       case 'ban':
-        await deleteMessage(chatId, message.message_id);
+        if (deleteOriginal) {
+          await deleteMessage(chatId, message.message_id);
+        }
         await this.logViolation(groupId, userId, result, 'ban');
         return { action: 'banned' };
 

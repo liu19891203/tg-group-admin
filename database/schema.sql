@@ -48,7 +48,7 @@ CREATE TABLE IF NOT EXISTS group_configs (
     group_id UUID NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
     welcome_config JSONB DEFAULT '{}'::jsonb,
     verification_config JSONB DEFAULT '{"enabled": false, "type": "channel", "timeout": 300, "punishment": "kick"}'::jsonb,
-    anti_ads_config JSONB DEFAULT '{"enabled": false, "keywords": [], "punishment": "delete", "warn_limit": 3}'::jsonb,
+    anti_ads_config JSONB DEFAULT '{"enabled": false, "keywords": [], "regex_patterns": [], "whitelist_users": [], "punishment": "delete", "warn_limit": 3, "warn_message": "⚠️ 您的消息包含广告内容，已被删除。", "delete_original": true, "sticker_ads": true, "keyword_ads": true, "link_ads": true, "image_ads": false}'::jsonb,
     auto_reply_config JSONB DEFAULT '{"enabled": false}'::jsonb,
     auto_delete_config JSONB DEFAULT '{"enabled": false, "rules": []}'::jsonb,
     anti_spam_config JSONB DEFAULT '{"enabled": false, "max_messages": 5, "time_window": 10, "punishment": "mute", "mute_duration": 300}'::jsonb,

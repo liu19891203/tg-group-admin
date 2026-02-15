@@ -105,9 +105,13 @@ export const groupConfigSchema = {
     link_ads: z.boolean().default(true),
     image_ads: z.boolean().default(false),
     keywords: z.array(z.string()).default([]),
+    regex_patterns: z.array(z.string()).default([]),
+    whitelist_users: z.array(z.number()).default([]),
     punishment: z.enum(['delete', 'warn', 'mute', 'kick', 'ban'])
       .default('delete'),
-    warn_limit: z.number().min(1).max(10).default(3)
+    warn_limit: z.number().min(1).max(10).default(3),
+    warn_message: z.string().default('⚠️ 您的消息包含广告内容，已被删除。'),
+    delete_original: z.boolean().default(true)
   }),
 
   auto_reply_config: z.object({

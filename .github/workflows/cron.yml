@@ -2,8 +2,8 @@ name: Telegram Group Manager - Scheduled Tasks
 
 on:
   schedule:
-    - cron: '0 * * * *'  # Every hour
-    - cron: '0 0 * * *'   # Daily at midnight
+    - cron: '*/5 * * * *'  # Every 5 minutes for scheduled messages
+    - cron: '0 0 * * *'    # Daily at midnight for stats
   workflow_dispatch:
     inputs:
       cron_type:
@@ -17,48 +17,52 @@ on:
 
 jobs:
   scheduled-messages:
-    if: github.event.schedule == '0 * * * *' || github.event.inputs.cron_type == 'scheduled-messages'
+    if: github.event.schedule == '*/5 * * * *' || github.event.inputs.cron_type == 'scheduled-messages'
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-
-      - name: Install dependencies
-        run: npm ci
-        working-directory: ./backend
-
-      - name: Run scheduled messages
+      - name: Run scheduled messages cron
         run: |
-          curl -X POST "${{ secrets.VERCEL_API_URL }}/api/cron/scheduled-messages" \
-            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}"
+          response=$(curl -s -w "\n%{http_code}" -X POST \
+            "${{ secrets.VERCEL_API_URL }}/api/cron/scheduled-messages" \
+            -H "Content-Type: application/json" \
+            -H "X-Cron-Key: ${{ secrets.CRON_SECRET }}")
+          
+          http_code=$(echo "$response" | tail -n1)
+          body=$(echo "$response" | sed '$d')
+          
+          echo "HTTP Status: $http_code"
+          echo "Response: $body"
+          
+          if [ "$http_code" -ne 200 ]; then
+            echo "::error::Scheduled messages cron failed with status $http_code"
+            exit 1
+          fi
+          
+          echo "Scheduled messages processed successfully"
 
   daily-stats:
     if: github.event.schedule == '0 0 * * *' || github.event.inputs.cron_type == 'daily-stats'
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-
-      - name: Install dependencies
-        run: npm ci
-        working-directory: ./backend
-
-      - name: Run daily stats
+      - name: Run daily stats cron
         run: |
-          curl -X POST "${{ secrets.VERCEL_API_URL }}/api/cron/daily-stats" \
-            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}"
+          response=$(curl -s -w "\n%{http_code}" -X POST \
+            "${{ secrets.VERCEL_API_URL }}/api/cron/daily-stats" \
+            -H "Content-Type: application/json" \
+            -H "X-Cron-Key: ${{ secrets.CRON_SECRET }}")
+          
+          http_code=$(echo "$response" | tail -n1)
+          body=$(echo "$response" | sed '$d')
+          
+          echo "HTTP Status: $http_code"
+          echo "Response: $body"
+          
+          if [ "$http_code" -ne 200 ]; then
+            echo "::error::Daily stats cron failed with status $http_code"
+            exit 1
+          fi
+          
+          echo "Daily stats processed successfully"
 
   deploy-backend:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'

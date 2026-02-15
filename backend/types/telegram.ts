@@ -42,6 +42,45 @@ export interface TelegramMessage {
   caption?: string;
   entities?: TelegramMessageEntity[];
   reply_markup?: InlineKeyboardMarkup;
+  sticker?: TelegramSticker;
+}
+
+export interface TelegramSticker {
+  file_id: string;
+  file_unique_id: string;
+  width: number;
+  height: number;
+  is_animated?: boolean;
+  is_video?: boolean;
+  thumb?: TelegramPhotoSize;
+  emoji?: string;
+  set_name?: string;
+  premium_animation?: TelegramFile;
+  mask_position?: TelegramMaskPosition;
+  custom_emoji_id?: string;
+  file_size?: number;
+}
+
+export interface TelegramPhotoSize {
+  file_id: string;
+  file_unique_id: string;
+  width: number;
+  height: number;
+  file_size?: number;
+}
+
+export interface TelegramFile {
+  file_id: string;
+  file_unique_id: string;
+  file_size?: number;
+  file_path?: string;
+}
+
+export interface TelegramMaskPosition {
+  point: 'forehead' | 'eyes' | 'mouth' | 'chin';
+  x_shift: number;
+  y_shift: number;
+  scale: number;
 }
 
 export interface TelegramMessageEntity {

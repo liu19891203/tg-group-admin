@@ -1,5 +1,6 @@
 import { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
+import { pointsService } from '../services/pointsService';
 
 const supabaseUrl = process.env.SUPABASE_URL!;
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -220,7 +221,19 @@ const handlers: Record<string, Handler> = {
 
   'GET /admin/points': async (req, res) => {
     const groupId = req.query.group_id as string;
-    let query = supabase.from('user_points').select('*, users(*)').order('points', { ascending: false });
+    let query = supabase
+      .from('user_points')
+      .select(`
+        *,
+        users (
+          id,
+          telegram_id,
+          username,
+          first_name,
+          display_name
+        )
+      `)
+      .order('total_points', { ascending: false });
     if (groupId) query = query.eq('group_id', groupId);
     const { data, error } = await query.limit(100);
     if (error) {
@@ -231,8 +244,57 @@ const handlers: Record<string, Handler> = {
   },
 
   'POST /admin/points/checkin': async (req, res) => {
-    const points = Math.floor(Math.random() * 20) + 10;
-    res.json({ success: true, data: { points_added: points } });
+    const { telegram_id, group_id } = req.body;
+    
+    if (!telegram_id || !group_id) {
+      res.status(400).json({ success: false, error: '缺少必要参数' });
+      return;
+    }
+
+    try {
+      const result = await pointsService.checkin(telegram_id, group_id);
+      res.json({ success: true, data: { points_added: result.points, streak: result.streak, bonus: result.bonus } });
+    } catch (error: any) {
+      if (error.message === '今日已签到') {
+        res.status(400).json({ success: false, error: '今日已签到' });
+      } else {
+        res.status(500).json({ success: false, error: error.message });
+      }
+    }
+  },
+
+  'POST /admin/points/adjust': async (req, res) => {
+    const { telegram_id, group_id, amount, admin_id, reason } = req.body;
+    
+    if (!telegram_id || !group_id || amount === undefined || !admin_id || !reason) {
+      res.status(400).json({ success: false, error: '缺少必要参数' });
+      return;
+    }
+
+    try {
+      const result = await pointsService.adjustPoints(telegram_id, group_id, amount, admin_id, reason);
+      res.json({ success: result.success, data: { before: result.beforePoints, after: result.afterPoints } });
+    } catch (error: any) {
+      res.status(500).json({ success: false, error: error.message });
+    }
+  },
+
+  'GET /admin/points/leaderboard': async (req, res) => {
+    const groupId = req.query.group_id as string;
+    const type = (req.query.type as 'daily' | 'monthly' | 'total') || 'total';
+    const limit = parseInt(req.query.limit as string) || 10;
+    
+    if (!groupId) {
+      res.status(400).json({ success: false, error: '缺少群组ID' });
+      return;
+    }
+
+    try {
+      const leaderboard = await pointsService.getLeaderboard(groupId, type, limit);
+      res.json({ success: true, data: leaderboard });
+    } catch (error: any) {
+      res.status(500).json({ success: false, error: error.message });
+    }
   },
 
   'GET /admin/lottery': async (req, res) => {
@@ -254,6 +316,215 @@ const handlers: Record<string, Handler> = {
       return;
     }
     res.json({ success: true, data: data[0] });
+  },
+
+  'GET /admin/lottery/:id': async (req, res, params) => {
+    const { data, error } = await supabase
+      .from('lotteries')
+      .select('*')
+      .eq('id', params.id)
+      .single();
+    if (error) {
+      res.status(404).json({ error: 'Not found' });
+      return;
+    }
+    res.json({ success: true, data });
+  },
+
+  'PUT /admin/lottery/:id': async (req, res, params) => {
+    const { data, error } = await supabase
+      .from('lotteries')
+      .update(req.body)
+      .eq('id', params.id)
+      .select();
+    if (error) {
+      res.status(500).json({ error: error.message });
+      return;
+    }
+    res.json({ success: true, data: data[0] });
+  },
+
+  'DELETE /admin/lottery/:id': async (req, res, params) => {
+    const { error } = await supabase.from('lotteries').delete().eq('id', params.id);
+    if (error) {
+      res.status(500).json({ error: error.message });
+      return;
+    }
+    res.json({ success: true });
+  },
+
+  'GET /admin/lottery/:id/participants': async (req, res, params) => {
+    const { data, error } = await supabase
+      .from('lottery_participants')
+      .select('*, users(id, telegram_id, username, first_name)')
+      .eq('lottery_id', params.id)
+      .order('joined_at', { ascending: false });
+    if (error) {
+      res.status(500).json({ error: error.message });
+      return;
+    }
+    res.json({ success: true, data: data || [] });
+  },
+
+  'POST /admin/lottery/:id/draw': async (req, res, params) => {
+    const { admin_id } = req.body;
+    
+    const { data: lottery, error: lotteryError } = await supabase
+      .from('lotteries')
+      .select('*')
+      .eq('id', params.id)
+      .single();
+
+    if (lotteryError || !lottery) {
+      res.status(404).json({ success: false, error: '抽奖不存在' });
+      return;
+    }
+
+    if (lottery.status === 'ended') {
+      res.status(400).json({ success: false, error: '抽奖已结束' });
+      return;
+    }
+
+    const { data: participants, error: participantsError } = await supabase
+      .from('lottery_participants')
+      .select('*')
+      .eq('lottery_id', params.id);
+
+    if (participantsError) {
+      res.status(500).json({ success: false, error: participantsError.message });
+      return;
+    }
+
+    if (!participants || participants.length === 0) {
+      res.status(400).json({ success: false, error: '无人参与抽奖' });
+      return;
+    }
+
+    const tickets: { userId: string; telegramId: number }[] = [];
+    for (const p of participants) {
+      for (let i = 0; i < (p.ticket_count || 1); i++) {
+        tickets.push({
+          userId: p.user_id,
+          telegramId: p.telegram_id
+        });
+      }
+    }
+
+    const winnerCount = Math.min(lottery.winner_count, participants.length);
+    const winners: { userId: string; telegramId: number }[] = [];
+    const usedIndices = new Set<number>();
+
+    while (winners.length < winnerCount && usedIndices.size < tickets.length) {
+      const index = Math.floor(Math.random() * tickets.length);
+      if (!usedIndices.has(index)) {
+        usedIndices.add(index);
+        const winner = tickets[index];
+        if (!lottery.is_repeat_winner_allowed && winners.some(w => w.userId === winner.userId)) {
+          continue;
+        }
+        winners.push(winner);
+      }
+    }
+
+    await supabase
+      .from('lottery_participants')
+      .update({ is_winner: false })
+      .eq('lottery_id', params.id);
+
+    const winnerIds = winners.map(w => w.userId);
+    await supabase
+      .from('lottery_participants')
+      .update({ is_winner: true })
+      .eq('lottery_id', params.id)
+      .in('user_id', winnerIds);
+
+    await supabase
+      .from('lotteries')
+      .update({
+        status: 'ended',
+        winner_ids: winnerIds,
+        winner_telegram_ids: winners.map(w => w.telegramId)
+      })
+      .eq('id', params.id);
+
+    for (const winner of winners) {
+      try {
+        await callTelegramApi('sendMessage', {
+          chat_id: winner.telegramId,
+          text: `🎉 恭喜您中奖了！\n\n🏆 奖品：${lottery.prize}\n\n请联系群管理员领取奖品。`,
+          parse_mode: 'HTML'
+        });
+      } catch (e) {
+        console.error('Failed to notify winner:', winner.telegramId, e);
+      }
+    }
+
+    res.json({
+      success: true,
+      data: {
+        winners: winners.map(w => ({
+          user_id: w.userId,
+          telegram_id: w.telegramId
+        })),
+        participant_count: participants.length,
+        prize: lottery.prize
+      }
+    });
+  },
+
+  'POST /admin/lottery/:id/publish': async (req, res, params) => {
+    const { chat_id } = req.body;
+    
+    const { data: lottery, error: lotteryError } = await supabase
+      .from('lotteries')
+      .select('*')
+      .eq('id', params.id)
+      .single();
+
+    if (lotteryError || !lottery) {
+      res.status(404).json({ success: false, error: '抽奖不存在' });
+      return;
+    }
+
+    if (lottery.status !== 'draft' && lottery.status !== 'active') {
+      res.status(400).json({ success: false, error: '抽奖状态不允许发布' });
+      return;
+    }
+
+    let message = `🎉 <b>${lottery.title}</b>\n\n`;
+    if (lottery.description) {
+      message += `📝 ${lottery.description}\n\n`;
+    }
+    message += `🏆 奖品：${lottery.prize}\n`;
+    message += `👥 参与人数：${lottery.participant_count || 0}\n`;
+    
+    if (lottery.end_at) {
+      const endDate = new Date(lottery.end_at);
+      message += `⏰ 截止时间：${endDate.toLocaleString('zh-CN')}\n`;
+    }
+
+    const keyboard = {
+      inline_keyboard: [
+        [{ text: '🎲 参与抽奖', callback_data: `lottery_participate:${lottery.id}` }],
+        [{ text: '🎁 开奖', callback_data: `lottery_draw:${lottery.id}` }]
+      ]
+    };
+
+    const result = await callTelegramApi('sendMessage', {
+      chat_id: chat_id,
+      text: message,
+      parse_mode: 'HTML',
+      reply_markup: keyboard
+    });
+
+    if (result.ok) {
+      await supabase
+        .from('lotteries')
+        .update({ status: 'active' })
+        .eq('id', params.id);
+    }
+
+    res.json({ success: result.ok, data: result.result });
   },
 
   'GET /admin/scheduled-messages': async (req, res) => {

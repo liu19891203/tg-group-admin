@@ -10,10 +10,28 @@
       "maxDuration": 30
     }
   },
+  "crons": [
+    {
+      "path": "/api/cron/scheduled-messages",
+      "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/cron/daily-stats",
+      "schedule": "0 0 * * *"
+    }
+  ],
   "rewrites": [
     {
       "source": "/api/telegram/webhook",
       "destination": "/api/telegram/webhook"
+    },
+    {
+      "source": "/api/cron/scheduled-messages",
+      "destination": "/api/cron/scheduled-messages"
+    },
+    {
+      "source": "/api/cron/daily-stats",
+      "destination": "/api/cron/daily-stats"
     },
     {
       "source": "/api/(.*)",
@@ -26,7 +44,7 @@
       "headers": [
         { "key": "Access-Control-Allow-Origin", "value": "*" },
         { "key": "Access-Control-Allow-Methods", "value": "GET, POST, PUT, DELETE, OPTIONS" },
-        { "key": "Access-Control-Allow-Headers", "value": "Content-Type, Authorization" }
+        { "key": "Access-Control-Allow-Headers", "value": "Content-Type, Authorization, X-Cron-Key" }
       ]
     }
   ]

@@ -139,6 +139,11 @@ export interface Database {
         Insert: Omit<VerifiedUser, 'id' | 'verified_at'>;
         Update: any;
       };
+      pending_delete_messages: {
+        Row: PendingDeleteMessage;
+        Insert: Omit<PendingDeleteMessage, 'id' | 'created_at'>;
+        Update: Partial<Omit<PendingDeleteMessage, 'id'>>;
+      };
     };
   };
 }
@@ -227,8 +232,12 @@ export interface AntiAdsConfig {
   link_ads: boolean;
   image_ads: boolean;
   keywords: string[];
-  punishment: 'delete' | 'warn' | 'mute' | 'ban';
+  regex_patterns: string[];
+  whitelist_users: number[];
+  punishment: 'delete' | 'warn' | 'mute' | 'kick' | 'ban';
   warn_limit: number;
+  warn_message: string;
+  delete_original: boolean;
 }
 
 export interface AutoReplyConfig {
@@ -252,8 +261,10 @@ export interface AntiSpamConfig {
   enabled: boolean;
   max_messages: number;
   time_window: number;
-  punishment: 'mute' | 'ban' | 'delete';
+  duplicate_threshold: number;
+  punishment: 'delete' | 'warn' | 'mute' | 'kick' | 'ban';
   mute_duration: number;
+  warn_message?: string;
 }
 
 export interface PointsConfig {
@@ -669,5 +680,14 @@ export interface VerificationRecord {
   attempt_count: number;
   max_attempts: number;
   completed_at?: string;
+  created_at: string;
+}
+
+export interface PendingDeleteMessage {
+  id: string;
+  chat_id: number;
+  message_id: number;
+  delete_at: string;
+  reason?: string;
   created_at: string;
 }

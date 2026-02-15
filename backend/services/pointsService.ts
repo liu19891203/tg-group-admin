@@ -39,18 +39,20 @@ export const pointsService = {
     if (!config?.enabled || !text) return;
 
     try {
+      const user = await cacheManager.getOrCreateUser(telegramId);
+      if (!user) return;
+
       const today = new Date().toISOString().split('T')[0];
 
       const { data: todayLogs } = await supabase
         .from('points_logs')
-        .select('SUM(change_amount) as total')
-        .eq('telegram_id', telegramId)
+        .select('change_amount')
+        .eq('user_id', user.id)
         .eq('group_id', groupId)
         .eq('change_type', 'message')
-        .gte('created_at', `${today}T00:00:00`)
-        .single();
+        .gte('created_at', `${today}T00:00:00`);
 
-      const todayPoints = todayLogs?.total || 0;
+      const todayPoints = todayLogs?.reduce((sum, log) => sum + (log.change_amount || 0), 0) || 0;
 
       if (todayPoints >= (config.daily_limit || 100)) {
         return;
@@ -168,10 +170,15 @@ export const pointsService = {
     const today = new Date().toISOString().split('T')[0];
     const yesterday = new Date(Date.now() - 86400000).toISOString().split('T')[0];
 
+    const user = await cacheManager.getOrCreateUser(telegramId);
+    if (!user) {
+      throw new Error('用户不存在');
+    }
+
     const { data: todayCheckin } = await supabase
       .from('points_logs')
       .select('id')
-      .eq('telegram_id', telegramId)
+      .eq('user_id', user.id)
       .eq('group_id', groupId)
       .eq('change_type', 'checkin')
       .gte('created_at', `${today}T00:00:00`)
@@ -196,48 +203,62 @@ export const pointsService = {
       keyword_pattern: '[\\u4e00-\\u9fa5]{5,}'
     };
 
-    const user = await cacheManager.getOrCreateUser(telegramId);
-    if (!user) {
-      throw new Error('用户不存在');
-    }
-
     const { data: pointsRecord } = await supabase
       .from('user_points')
-      .select('checkin_streak, last_checkin_at, checkin_count')
+      .select('id, checkin_streak, last_checkin_at, checkin_count')
       .eq('user_id', user.id)
       .eq('group_id', groupId)
       .single();
 
     let streak = 1;
     let bonus = 0;
-    let isFirstCheckin = false;
+    let isFirstCheckin = !pointsRecord;
 
     if (pointsRecord?.last_checkin_at?.startsWith(yesterday)) {
       streak = (pointsRecord.checkin_streak || 0) + 1;
-    } else if (!pointsRecord?.last_checkin_at?.startsWith(today)) {
+    } else if (pointsRecord?.last_checkin_at?.startsWith(today)) {
+      streak = pointsRecord.checkin_streak || 1;
+    } else if (pointsRecord) {
       streak = 1;
-    } else {
-      streak = pointsRecord?.checkin_streak || 1;
     }
 
-    const bonusIndex = Math.min(streak - 1, pointsConfig.checkin_bonus.length - 1);
-    bonus = pointsConfig.checkin_bonus[bonusIndex] || 0;
+    const bonusIndex = Math.min(streak - 1, (pointsConfig.checkin_bonus || []).length - 1);
+    bonus = (pointsConfig.checkin_bonus || [])[bonusIndex] || 0;
 
-    const totalPoints = pointsConfig.checkin_base + bonus;
+    const totalPoints = (pointsConfig.checkin_base || 10) + bonus;
 
     await this.addPoints(telegramId, groupId, totalPoints, 'checkin', {
-      reason: `签到获得：基础${pointsConfig.checkin_base} + 连续签到奖励${bonus}`
+      reason: `签到获得：基础${pointsConfig.checkin_base || 10} + 连续签到奖励${bonus}`
     });
 
-    await supabase
-      .from('user_points')
-      .update({
-        checkin_count: (pointsRecord?.checkin_count || 0) + 1,
-        checkin_streak: streak,
-        last_checkin_at: new Date().toISOString()
-      })
-      .eq('id', pointsRecord?.id)
-      .is('id', null);
+    if (pointsRecord?.id) {
+      await supabase
+        .from('user_points')
+        .update({
+          checkin_count: (pointsRecord.checkin_count || 0) + 1,
+          checkin_streak: streak,
+          last_checkin_at: new Date().toISOString()
+        })
+        .eq('id', pointsRecord.id);
+    } else {
+      const { data: newPointsRecord } = await supabase
+        .from('user_points')
+        .select('id')
+        .eq('user_id', user.id)
+        .eq('group_id', groupId)
+        .single();
+
+      if (newPointsRecord) {
+        await supabase
+          .from('user_points')
+          .update({
+            checkin_count: 1,
+            checkin_streak: streak,
+            last_checkin_at: new Date().toISOString()
+          })
+          .eq('id', newPointsRecord.id);
+      }
+    }
 
     return {
       points: totalPoints,
@@ -276,13 +297,15 @@ export const pointsService = {
     const user = await cacheManager.getOrCreateUser(telegramId);
     if (!user) return 0;
 
-    const { data: result } = await supabase
-      .from('user_points')
-      .select('points', { count: 'exact', head: true })
-      .eq('group_id', groupId)
-      .gt('points', (await this.getUserPoints(telegramId, groupId)) || 0);
+    const userPoints = await this.getUserPoints(telegramId, groupId);
 
-    return (result?.count || 0) + 1;
+    const { count } = await supabase
+      .from('user_points')
+      .select('*', { count: 'exact', head: true })
+      .eq('group_id', groupId)
+      .gt('points', userPoints);
+
+    return (count || 0) + 1;
   },
 
   async getUserPoints(telegramId: number, groupId: string): Promise<number> {
