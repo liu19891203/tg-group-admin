@@ -18,8 +18,9 @@ interface AuthState {
 
 interface LoginResponse {
   success: boolean
-  token: string
-  user: User
+  token?: string
+  user?: User
+  error?: string
 }
 
 export const useAuthStore = defineStore('auth', {
