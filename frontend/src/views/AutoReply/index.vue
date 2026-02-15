@@ -206,6 +206,7 @@
                 
                 <!-- 编辑框 -->
                 <el-input 
+                  ref="replyContentRef"
                   v-model="newRule.reply_content" 
                   type="textarea" 
                   :rows="6"
@@ -316,7 +317,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, reactive, computed } from 'vue'
+import { ref, onMounted, reactive, computed, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Delete, SemiSelect, Rank, Minus, Close, UserFilled, Grid, View } from '@element-plus/icons-vue'
 import InlineKeyboardEditor, { type InlineButton } from '@/components/InlineKeyboardEditor/InlineKeyboardEditor.vue'
@@ -380,6 +381,7 @@ const testResult = ref<MatchResult | null>(null)
 const showInlineKeyboard = ref(false)
 const inlineKeyboard = ref<InlineButton[]>([])
 const keyboardEditorRef = ref<InstanceType<typeof InlineKeyboardEditor> | null>(null)
+const replyContentRef = ref<any>(null)
 
 const newRule = reactive<Partial<AutoReplyRule>>({
   keyword: '',
@@ -431,9 +433,27 @@ const insertTemplate = (type: string) => {
   newRule.reply_content = (newRule.reply_content || '') + template
 }
 
-// 插入变量
+// 插入变量到光标位置
 const insertVariable = (variable: string) => {
-  newRule.reply_content = (newRule.reply_content || '') + `{${variable}}`
+  const textarea = replyContentRef.value?.$el?.querySelector('textarea')
+  const variableText = `{${variable}}`
+  const currentValue = newRule.reply_content || ''
+  
+  if (!textarea) {
+    newRule.reply_content = currentValue + variableText
+    return
+  }
+  
+  const start = textarea.selectionStart
+  const end = textarea.selectionEnd
+  
+  newRule.reply_content = currentValue.substring(0, start) + variableText + currentValue.substring(end)
+  
+  nextTick(() => {
+    const newCursorPos = start + variableText.length
+    textarea.focus()
+    textarea.setSelectionRange(newCursorPos, newCursorPos)
+  })
 }
 
 // 图片上传相关方法

@@ -139,6 +139,7 @@
                 
                 <!-- 编辑框 -->
                 <el-input 
+                  ref="messageContentRef"
                   v-model="newMessage.content" 
                   type="textarea" 
                   :rows="6"
@@ -293,7 +294,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, computed, reactive } from 'vue'
+import { ref, onMounted, computed, reactive, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Clock, Delete, SemiSelect, Rank, Minus, Close, UserFilled } from '@element-plus/icons-vue'
 import api from '@/api'
@@ -325,6 +326,7 @@ const activeTab = ref('all')
 const messages = ref<ScheduledMessage[]>([])
 const showCreateDialog = ref(false)
 const editingMessage = ref<ScheduledMessage | null>(null)
+const messageContentRef = ref<any>(null)
 
 const newMessage = reactive<Omit<ScheduledMessage, 'id'>>({
   group_id: '',
@@ -378,7 +380,25 @@ const insertTemplate = (type: string) => {
 }
 
 function insertVariable(variable: string) {
-  newMessage.content += `{${variable}}`
+  const textarea = messageContentRef.value?.$el?.querySelector('textarea')
+  const variableText = `{${variable}}`
+  
+  if (!textarea) {
+    newMessage.content += variableText
+    return
+  }
+  
+  const start = textarea.selectionStart
+  const end = textarea.selectionEnd
+  const text = newMessage.content || ''
+  
+  newMessage.content = text.substring(0, start) + variableText + text.substring(end)
+  
+  nextTick(() => {
+    const newCursorPos = start + variableText.length
+    textarea.focus()
+    textarea.setSelectionRange(newCursorPos, newCursorPos)
+  })
 }
 
 // 图片上传相关方法

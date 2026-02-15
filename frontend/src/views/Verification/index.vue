@@ -125,6 +125,7 @@
                 
                 <!-- 编辑框 -->
                 <el-input
+                  ref="verificationMessageRef"
                   v-model="formData.verification_message"
                   type="textarea"
                   :rows="8"
@@ -297,6 +298,7 @@
                 
                 <!-- 编辑框 -->
                 <el-input
+                  ref="successMessageRef"
                   v-model="formData.success_message"
                   type="textarea"
                   :rows="6"
@@ -595,7 +597,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, computed, nextTick } from 'vue'
 import { ElMessage } from 'element-plus'
 import { UserFilled, SemiSelect, Rank, Minus, Close, Plus, Delete, Grid, View, ChatSquare } from '@element-plus/icons-vue'
 import api from '@/api'
@@ -632,6 +634,9 @@ interface VerificationConfig {
 }
 
 const { currentGroupId, hasGroup } = useSelectedGroup()
+
+const verificationMessageRef = ref<any>(null)
+const successMessageRef = ref<any>(null)
 
 const formData = ref<VerificationConfig>({
   enabled: false,
@@ -733,7 +738,7 @@ const insertTemplate = (field: 'verification' | 'success', type: string) => {
   formData.value[fieldKey] = currentValue + template
 }
 
-// 插入变量
+// 插入变量到光标位置
 const insertVariable = (field: 'verification' | 'success', variable: string) => {
   const variables: Record<string, string> = {
     user_name: '{user_name}',
@@ -743,9 +748,27 @@ const insertVariable = (field: 'verification' | 'success', variable: string) => 
   }
   
   const fieldKey = field === 'verification' ? 'verification_message' : 'success_message'
-  const currentValue = formData.value[fieldKey] || ''
+  const inputRef = field === 'verification' ? verificationMessageRef : successMessageRef
+  const textarea = inputRef.value?.$el?.querySelector('textarea')
+  const variableText = variables[variable]
   
-  formData.value[fieldKey] = currentValue + variables[variable]
+  if (!textarea) {
+    const currentValue = formData.value[fieldKey] || ''
+    formData.value[fieldKey] = currentValue + variableText
+    return
+  }
+  
+  const start = textarea.selectionStart
+  const end = textarea.selectionEnd
+  const text = formData.value[fieldKey] || ''
+  
+  formData.value[fieldKey] = text.substring(0, start) + variableText + text.substring(end)
+  
+  nextTick(() => {
+    const newCursorPos = start + variableText.length
+    textarea.focus()
+    textarea.setSelectionRange(newCursorPos, newCursorPos)
+  })
 }
 
 // 显示内联按钮编辑器
