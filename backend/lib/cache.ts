@@ -178,7 +178,11 @@ export class CacheManager {
   }
 }
 
-export const cacheManager = CacheManager.getInstance();
+export const cacheManager = new Proxy({} as CacheManager, {
+  get(target, prop) {
+    return CacheManager.getInstance()[prop as keyof CacheManager];
+  }
+});
 
 export async function handleUpdate(update: TelegramUpdate): Promise<{
   handled: boolean;
