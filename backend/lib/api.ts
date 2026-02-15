@@ -10,18 +10,27 @@ function getBotToken(): string {
   return token;
 }
 
-function createClient(): AxiosInstance {
+let clientInstance: AxiosInstance | null = null;
+
+function getClient(): AxiosInstance {
+  if (clientInstance) return clientInstance;
+  
   const token = getBotToken();
-  return axios.create({
+  clientInstance = axios.create({
     baseURL: `${BASE_URL}${token}/`,
     timeout: 10000,
     headers: {
       'Content-Type': 'application/json'
     }
   });
+  return clientInstance;
 }
 
-const client = createClient();
+const client = new Proxy({} as AxiosInstance, {
+  get(target, prop) {
+    return getClient()[prop as keyof AxiosInstance];
+  }
+});
 
 export async function sendMessage(
   chatId: number | string,
