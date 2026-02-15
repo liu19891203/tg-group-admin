@@ -17,9 +17,27 @@ const ADDRESS_PATTERNS: Record<string, RegExp> = {
   BTC: /^[13][a-km-zA-HJ-NP-Z1-9]{25,34}$|^bc1[a-z0-9]{39,59}$/
 };
 
-const supabaseUrl = process.env.SUPABASE_URL!;
-const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-const supabase = createClient(supabaseUrl, supabaseKey);
+let supabaseInstance: ReturnType<typeof createClient> | null = null;
+
+function getSupabase() {
+  if (supabaseInstance) return supabaseInstance;
+  
+  const url = process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  
+  if (!url || !key) {
+    throw new Error('SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required');
+  }
+  
+  supabaseInstance = createClient(url, key);
+  return supabaseInstance;
+}
+
+const supabase = new Proxy({} as ReturnType<typeof createClient>, {
+  get(target, prop) {
+    return getSupabase()[prop as keyof ReturnType<typeof createClient>];
+  }
+});
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const WEB_URL = process.env.WEB_URL || 'https://tg-group-admin-frontend.vercel.app';
