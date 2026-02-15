@@ -81,6 +81,7 @@
                   
                   <!-- 编辑框 -->
                   <el-input
+                    ref="messageTextRef"
                     v-model="messageForm.text"
                     type="textarea"
                     :rows="8"
@@ -299,7 +300,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, nextTick } from 'vue'
 import { ElMessage } from 'element-plus'
 import {
   Promotion,
@@ -346,6 +347,7 @@ const messageForm = reactive({
 })
 
 const keyboardEditorRef = ref<InstanceType<typeof InlineKeyboardEditor> | null>(null)
+const messageTextRef = ref<any>(null)
 
 const sending = ref(false)
 const history = ref<SentMessage[]>([])
@@ -406,9 +408,27 @@ const insertTemplate = (type: string) => {
   messageForm.text += template
 }
 
-// 插入变量
+// 插入变量到光标位置
 const insertVariable = (variable: string) => {
-  messageForm.text += `{${variable}}`
+  const textarea = messageTextRef.value?.$el?.querySelector('textarea')
+  const variableText = `{${variable}}`
+  
+  if (!textarea) {
+    messageForm.text += variableText
+    return
+  }
+  
+  const start = textarea.selectionStart
+  const end = textarea.selectionEnd
+  const text = messageForm.text || ''
+  
+  messageForm.text = text.substring(0, start) + variableText + text.substring(end)
+  
+  nextTick(() => {
+    const newCursorPos = start + variableText.length
+    textarea.focus()
+    textarea.setSelectionRange(newCursorPos, newCursorPos)
+  })
 }
 
 // 应用快捷模板

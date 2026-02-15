@@ -382,6 +382,7 @@
                   <div class="input-section">
                     <div class="input-label">消息内容</div>
                     <el-input
+                      ref="messageTemplateRef"
                       v-model="config.message_template"
                       type="textarea"
                       :rows="8"
@@ -743,7 +744,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, nextTick } from 'vue'
 import { ElMessage } from 'element-plus'
 import {
   Trophy, Link, Setting, Check, Plus, Refresh,
@@ -833,6 +834,7 @@ const publishDialogVisible = ref(false)
 const saving = ref(false)
 const addingRule = ref(false)
 const publishing = ref(false)
+const messageTemplateRef = ref<any>(null)
 
 // 新规则
 const newRule = ref<{
@@ -883,9 +885,26 @@ const formatPreviewText = (text: string): string => {
     .replace(/<a href=['"](.*?)['"]>(.*?)<\/a>/g, '<a href="$1" target="_blank">$2</a>')
 }
 
-// 插入变量
+// 插入变量到光标位置
 const insertVariable = (variable: string) => {
-  config.value.message_template += variable
+  const textarea = messageTemplateRef.value?.$el?.querySelector('textarea')
+  const currentValue = config.value.message_template || ''
+  
+  if (!textarea) {
+    config.value.message_template = currentValue + variable
+    return
+  }
+  
+  const start = textarea.selectionStart
+  const end = textarea.selectionEnd
+  
+  config.value.message_template = currentValue.substring(0, start) + variable + currentValue.substring(end)
+  
+  nextTick(() => {
+    const newCursorPos = start + variable.length
+    textarea.focus()
+    textarea.setSelectionRange(newCursorPos, newCursorPos)
+  })
 }
 
 // 添加内联按钮

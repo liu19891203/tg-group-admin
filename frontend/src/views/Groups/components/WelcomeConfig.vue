@@ -56,6 +56,7 @@
             
             <!-- 编辑框 -->
             <el-input
+              ref="messageInputRef"
               v-model="modelValue.message"
               type="textarea"
               :rows="6"
@@ -110,7 +111,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { ref, computed, nextTick } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Plus, Delete, SemiSelect, Rank, Minus, Close, UserFilled } from '@element-plus/icons-vue'
 
@@ -129,6 +130,8 @@ const props = defineProps<{
 const emit = defineEmits<{
   'update:modelValue': [value: WelcomeConfig]
 }>()
+
+const messageInputRef = ref<any>(null)
 
 // 渲染预览
 const renderedMessage = computed(() => {
@@ -162,12 +165,34 @@ const insertTemplate = (type: string) => {
   })
 }
 
-// 插入变量
+// 插入变量到光标位置
 const insertVariable = (variable: string) => {
+  const textarea = messageInputRef.value?.$el?.querySelector('textarea')
+  const variableText = `{${variable}}`
   const currentValue = props.modelValue.message || ''
+  
+  if (!textarea) {
+    emit('update:modelValue', {
+      ...props.modelValue,
+      message: currentValue + variableText
+    })
+    return
+  }
+  
+  const start = textarea.selectionStart
+  const end = textarea.selectionEnd
+  
+  const newMessage = currentValue.substring(0, start) + variableText + currentValue.substring(end)
+  
   emit('update:modelValue', {
     ...props.modelValue,
-    message: currentValue + `{${variable}}`
+    message: newMessage
+  })
+  
+  nextTick(() => {
+    const newCursorPos = start + variableText.length
+    textarea.focus()
+    textarea.setSelectionRange(newCursorPos, newCursorPos)
   })
 }
 
