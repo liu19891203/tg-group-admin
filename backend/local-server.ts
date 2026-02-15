@@ -1,8 +1,7 @@
 import { createServer } from 'http';
-import { parse } from 'url';
 import { readFileSync, existsSync } from 'fs';
 import { join, dirname } from 'path';
-import { fileURLToPath, pathToFileURL } from 'url';
+import { fileURLToPath, pathToFileURL, URL } from 'url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -75,8 +74,8 @@ function createVercelResponse(res: any): any {
 }
 
 async function handleRequest(req: any, res: any) {
-  const parsedUrl = parse(req.url || '/', true);
-  const pathname = parsedUrl.pathname || '/';
+  const url = new URL(req.url || '/', `http://${req.headers.host}`);
+  const pathname = url.pathname || '/';
   
   console.log(`${new Date().toISOString()} ${req.method} ${pathname}`);
 
@@ -216,7 +215,8 @@ function parseBody(req: any): Promise<any> {
 
 const server = createServer(async (req, res) => {
   await parseBody(req);
-  req.query = parse(req.url || '/', true).query;
+  const url = new URL(req.url || '/', `http://${req.headers.host}`);
+  req.query = Object.fromEntries(url.searchParams.entries());
   req.headers = req.headers || {};
   const vercelRes = createVercelResponse(res);
   await handleRequest(req, vercelRes);

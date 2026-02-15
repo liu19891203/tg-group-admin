@@ -1,8 +1,7 @@
 import { createServer } from 'http';
-import { parse } from 'url';
 import { existsSync } from 'fs';
 import { join } from 'path';
-import { pathToFileURL } from 'url';
+import { pathToFileURL, URL } from 'url';
 
 const __dirname = process.cwd();
 
@@ -105,7 +104,9 @@ function createVercelResponse(res: any): any {
 }
 
 const server = createServer(async (req, res) => {
-  const { pathname, query } = parse(req.url || '', true);
+  const url = new URL(req.url || '', `http://${req.headers.host}`);
+  const pathname = url.pathname;
+  const query = Object.fromEntries(url.searchParams.entries());
   
   // 处理OPTIONS请求
   if (req.method === 'OPTIONS') {
