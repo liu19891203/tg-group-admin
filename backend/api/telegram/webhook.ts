@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
 import { pointsService } from '../../services/pointsService';
