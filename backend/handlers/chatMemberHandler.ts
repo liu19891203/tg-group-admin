@@ -53,6 +53,7 @@ async function handleUserJoin(
     username?: string;
     first_name: string;
     last_name?: string;
+    is_bot?: boolean;
   },
   group: { id: string; title: string }
 ) {
@@ -60,11 +61,32 @@ async function handleUserJoin(
 
   console.log(`User ${user.username || user.first_name} joined group ${group.title}`);
 
-  await cacheManager.getOrCreateUser(user.id, {
+  // 创建或获取用户
+  const dbUser = await cacheManager.getOrCreateUser(user.id, {
     username: user.username,
     first_name: user.first_name,
     last_name: user.last_name
   });
+
+  // 添加到 group_members 表
+  if (dbUser) {
+    const { error } = await supabase
+      .from('group_members')
+      .upsert({
+        group_id: groupId,
+        user_id: dbUser.id,
+        is_active: true,
+        joined_at: new Date().toISOString()
+      }, {
+        onConflict: 'group_id,user_id'
+      });
+    
+    if (error) {
+      console.error('Failed to add member to group_members:', error);
+    } else {
+      console.log(`Added user ${user.id} to group_members for group ${groupId}`);
+    }
+  }
 
   const config = await cacheManager.getGroupConfig(groupId);
   if (!config?.verification_config.enabled) {
@@ -90,6 +112,31 @@ async function handleUserLeave(
   }
 ) {
   console.log(`User ${user.username || user.first_name} left group ${groupId}`);
+
+  // 获取用户的 UUID
+  const { data: userData } = await supabase
+    .from('users')
+    .select('id')
+    .eq('telegram_id', user.id)
+    .single();
+
+  if (userData) {
+    // 更新 group_members 表中的状态
+    const { error } = await supabase
+      .from('group_members')
+      .update({
+        is_active: false,
+        left_at: new Date().toISOString()
+      })
+      .eq('group_id', groupId)
+      .eq('user_id', userData.id);
+    
+    if (error) {
+      console.error('Failed to update member status:', error);
+    } else {
+      console.log(`Updated user ${user.id} status to inactive in group ${groupId}`);
+    }
+  }
 }
 
 async function handleAdminChange(
