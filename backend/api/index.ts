@@ -34,7 +34,8 @@ const handlers: Record<string, Handler> = {
   },
 
   'GET /admin/groups': async (req, res) => {
-    const { data, error, count } = await supabase
+    // 获取群组列表
+    const { data: groups, error, count } = await supabase
       .from('groups')
       .select('*', { count: 'exact' })
       .eq('is_active', true);
@@ -42,9 +43,36 @@ const handlers: Record<string, Handler> = {
       res.status(500).json({ error: error.message });
       return;
     }
+
+    // 获取每个群组的成员数
+    const groupIds = groups?.map(g => g.id) || [];
+    let memberCounts: Record<string, number> = {};
+    
+    if (groupIds.length > 0) {
+      const { data: membersData, error: membersError } = await supabase
+        .from('group_members')
+        .select('group_id')
+        .in('group_id', groupIds)
+        .eq('is_active', true);
+      
+      if (!membersError && membersData) {
+        // 统计每个群组的成员数
+        memberCounts = membersData.reduce((acc, member) => {
+          acc[member.group_id] = (acc[member.group_id] || 0) + 1;
+          return acc;
+        }, {} as Record<string, number>);
+      }
+    }
+
+    // 合并成员数到群组数据
+    const groupsWithMemberCount = groups?.map(group => ({
+      ...group,
+      member_count: memberCounts[group.id] || group.member_count || 0
+    })) || [];
+
     res.json({ 
       success: true, 
-      data: data || [],
+      data: groupsWithMemberCount,
       total: count || 0,
       page: 1,
       limit: 100
