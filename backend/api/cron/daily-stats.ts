@@ -1,9 +1,22 @@
 import { VercelRequest, VercelResponse } from '@vercel/node';
-import { createClient } from '@supabase/supabase-js';
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
-const supabaseUrl = process.env.SUPABASE_URL!;
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-const supabase = createClient(supabaseUrl, supabaseServiceKey);
+let supabaseInstance: SupabaseClient | null = null;
+
+function getSupabase(): SupabaseClient {
+  if (supabaseInstance) return supabaseInstance;
+  const url = process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) throw new Error('SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required');
+  supabaseInstance = createClient(url, key);
+  return supabaseInstance;
+}
+
+const supabase = new Proxy({} as SupabaseClient, {
+  get(target, prop) {
+    return getSupabase()[prop as keyof SupabaseClient];
+  }
+});
 
 const CRON_SECRET = process.env.CRON_SECRET;
 
