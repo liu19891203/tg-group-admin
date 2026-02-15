@@ -1588,9 +1588,103 @@ async function handleCallbackQuery(update: TelegramUpdate) {
   }
 }
 
+/**
+ * 检查命令是否可用
+ * @param chatId 群组ID
+ * @param userId 用户ID
+ * @param command 命令名称
+ * @returns { isAvailable: boolean, reason?: string }
+ */
+async function checkCommandAvailability(
+  chatId: number,
+  userId: number | undefined,
+  command: string
+): Promise<{ isAvailable: boolean; reason?: string }> {
+  // 私聊中不检查命令配置
+  const chatType = await getChatType(chatId);
+  if (chatType === 'private') {
+    return { isAvailable: true };
+  }
+
+  const supabase = getSupabase();
+
+  // 获取群组配置
+  const { data: group } = await supabase
+    .from('groups')
+    .select('id')
+    .eq('chat_id', chatId)
+    .single();
+
+  if (!group) {
+    return { isAvailable: true }; // 群组未注册，允许使用
+  }
+
+  // 获取命令配置
+  const { data: config } = await supabase
+    .from('group_configs')
+    .select('commands_config')
+    .eq('group_id', group.id)
+    .single();
+
+  const commandsConfig = config?.commands_config;
+
+  // 如果没有命令配置或命令管理未启用，允许使用
+  if (!commandsConfig || !commandsConfig.enabled) {
+    return { isAvailable: true };
+  }
+
+  // 检查特定命令的配置
+  const cmdConfig = commandsConfig[command];
+  if (!cmdConfig) {
+    return { isAvailable: true }; // 未配置该命令，允许使用
+  }
+
+  // 检查命令是否被禁用
+  if (cmdConfig.enabled === false) {
+    return { isAvailable: false, reason: '该命令已被管理员禁用' };
+  }
+
+  // 检查权限
+  if (cmdConfig.roles && cmdConfig.roles.length > 0) {
+    if (!userId) {
+      return { isAvailable: false, reason: '无法获取用户信息' };
+    }
+
+    const isAdmin = await isGroupAdmin(chatId, userId);
+    if (!isAdmin) {
+      return { isAvailable: false, reason: '该命令仅限管理员使用' };
+    }
+  }
+
+  return { isAvailable: true };
+}
+
+/**
+ * 获取聊天类型
+ */
+async function getChatType(chatId: number): Promise<string> {
+  try {
+    const result = await callTelegramApi('getChat', { chat_id: chatId });
+    return result.result?.type || 'unknown';
+  } catch {
+    return 'unknown';
+  }
+}
+
 async function handleCommand(chatId: number, userId: number | undefined, username: string, text: string, message: any) {
   const command = text.split(' ')[0].toLowerCase();
   console.log('Command:', command);
+
+  // 检查命令是否可用
+  const checkResult = await checkCommandAvailability(chatId, userId, command);
+  if (!checkResult.isAvailable) {
+    await callTelegramApi('sendMessage', {
+      chat_id: chatId,
+      text: `⚠️ ${checkResult.reason}`,
+      reply_to_message_id: message.message_id
+    });
+    return;
+  }
 
   switch (command) {
     case '/start':
