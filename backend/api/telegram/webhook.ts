@@ -31,7 +31,7 @@ interface TelegramUpdate {
   callback_query?: any;
 }
 
-async function callTelegramApi(method: string, params: Record<string, any>) {
+async function callTelegramApi(method: string, params: Record<string, any>): Promise<any> {
   const url = `https://api.telegram.org/bot${BOT_TOKEN}/${method}`;
   const response = await fetch(url, {
     method: 'POST',
