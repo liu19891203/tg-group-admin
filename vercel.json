@@ -1,15 +1,12 @@
 {
   "version": 2,
-  "framework": null,
-  "buildCommand": "cd frontend && npm run build",
+  "framework": "vite",
+  "buildCommand": "cd frontend && npm install && npm run build",
   "outputDirectory": "frontend/dist",
-  "installCommand": "npm install && cd frontend && npm install && cd ../backend && npm install",
+  "installCommand": "cd backend && npm install",
   "regions": ["iad1"],
   "functions": {
     "backend/api/**/*.ts": {
-      "maxDuration": 30
-    },
-    "backend/api/**/*.js": {
       "maxDuration": 30
     }
   },
