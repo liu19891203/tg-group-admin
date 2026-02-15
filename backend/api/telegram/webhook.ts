@@ -22,6 +22,12 @@ interface TelegramUpdate {
     new_chat_member: { status: string; user: { id: number; is_bot: boolean; first_name: string } };
     old_chat_member: { status: string };
   };
+  chat_member?: {
+    chat: { id: number; type: string; title?: string; username?: string };
+    from: { id: number; first_name: string; username?: string; is_bot: boolean };
+    new_chat_member: { status: string; user: { id: number; is_bot: boolean; first_name: string; username?: string } };
+    old_chat_member: { status: string };
+  };
   callback_query?: any;
 }
 
@@ -177,6 +183,310 @@ async function handleCommand(chatId: number, userId: number | undefined, usernam
   return false;
 }
 
+// 处理新成员加入群组
+async function handleNewChatMember(update: TelegramUpdate) {
+  const chatMember = update.chat_member!;
+  const chat = chatMember.chat;
+  const newStatus = chatMember.new_chat_member.status;
+  const oldStatus = chatMember.old_chat_member?.status;
+  const user = chatMember.new_chat_member.user;
+
+  console.log('Chat member update:', {
+    chat_id: chat.id,
+    chat_title: chat.title,
+    user_id: user.id,
+    user_name: user.username || user.first_name,
+    old_status: oldStatus,
+    new_status: newStatus
+  });
+
+  // 只处理新成员加入（从 left 变为 member）
+  if (newStatus !== 'member' || oldStatus === 'member') {
+    return;
+  }
+
+  // 跳过机器人
+  if (user.is_bot) {
+    return;
+  }
+
+  try {
+    // 1. 获取群组信息
+    const { data: group } = await supabase
+      .from('groups')
+      .select('id, title')
+      .eq('chat_id', chat.id)
+      .single();
+
+    if (!group) {
+      console.log('Group not found:', chat.id);
+      return;
+    }
+
+    // 2. 创建或获取用户
+    const { data: userData, error: userError } = await supabase
+      .from('users')
+      .upsert({
+        telegram_id: user.id,
+        username: user.username,
+        first_name: user.first_name,
+        is_bot: user.is_bot
+      }, { onConflict: 'telegram_id' })
+      .select()
+      .single();
+
+    if (userError) {
+      console.error('Error upserting user:', userError);
+      return;
+    }
+
+    // 3. 添加到 group_members 表
+    await supabase
+      .from('group_members')
+      .upsert({
+        group_id: group.id,
+        user_id: userData.id,
+        is_active: true,
+        joined_at: new Date().toISOString()
+      }, {
+        onConflict: 'group_id,user_id'
+      });
+
+    console.log(`User ${user.username || user.first_name} added to group_members`);
+
+    // 4. 检查验证配置
+    const { data: config } = await supabase
+      .from('group_configs')
+      .select('verification_config')
+      .eq('group_id', group.id)
+      .single();
+
+    const verificationConfig = config?.verification_config;
+    
+    if (!verificationConfig?.enabled) {
+      console.log('Verification not enabled for group:', group.id);
+      return;
+    }
+
+    console.log('Starting verification for user:', user.id);
+
+    // 5. 禁言用户
+    await callTelegramApi('restrictChatMember', {
+      chat_id: chat.id,
+      user_id: user.id,
+      permissions: {
+        can_send_messages: false,
+        can_send_media_messages: false,
+        can_send_other_messages: false,
+        can_add_web_page_previews: false
+      },
+      until_date: Math.floor(Date.now() / 1000) + 86400
+    });
+
+    // 6. 创建验证记录
+    const verifyId = crypto.randomUUID();
+    const timeout = verificationConfig.timeout || 300;
+    const expiresAt = new Date(Date.now() + timeout * 1000).toISOString();
+
+    const { data: record, error: recordError } = await supabase
+      .from('verification_records')
+      .insert({
+        group_id: group.id,
+        telegram_id: user.id,
+        verification_type: verificationConfig.type || 'math',
+        status: 'pending',
+        challenge_data: {
+          verify_id: verifyId,
+          channel_id: verificationConfig.channel_id
+        },
+        expires_at: expiresAt,
+        max_attempts: 3
+      })
+      .select()
+      .single();
+
+    if (recordError) {
+      console.error('Error creating verification record:', recordError);
+      return;
+    }
+
+    // 7. 发送验证消息
+    let message: string;
+    let keyboard: any;
+
+    switch (verificationConfig.type) {
+      case 'channel':
+        message = `🎉 欢迎 ${user.first_name} 加入群组！\n\n⚠️ 请先关注频道后点击下方按钮完成验证：\n\n⏰ ${Math.floor(timeout / 60)}分钟内有效`;
+        keyboard = {
+          inline_keyboard: [[{
+            text: '✅ 我已关注频道',
+            callback_data: `verify_channel:${record.id}`
+          }]]
+        };
+        break;
+      case 'math':
+        message = `🎉 欢迎 ${user.first_name} 加入群组！\n\n⚠️ 请完成验证：\n\n请计算：15 + 27 = ?\n\n请在私聊中输入答案\n⏰ ${Math.floor(timeout / 60)}分钟内有效`;
+        break;
+      default:
+        message = `🎉 欢迎 ${user.first_name} 加入群组！\n\n⚠️ 请完成验证\n⏰ ${Math.floor(timeout / 60)}分钟内有效`;
+    }
+
+    await callTelegramApi('sendMessage', {
+      chat_id: chat.id,
+      text: message,
+      reply_markup: keyboard
+    });
+
+    console.log('Verification message sent to user:', user.id);
+
+  } catch (error) {
+    console.error('Error handling new chat member:', error);
+  }
+}
+
+// 处理回调查询
+async function handleCallbackQuery(update: TelegramUpdate) {
+  const callbackQuery = update.callback_query!;
+  const data = callbackQuery.data;
+  const userId = callbackQuery.from.id;
+  const messageId = callbackQuery.message?.message_id;
+  const chatId = callbackQuery.message?.chat?.id;
+
+  console.log('Callback query:', { data, userId, chatId });
+
+  if (!data?.startsWith('verify_channel:')) {
+    return;
+  }
+
+  const recordId = data.split(':')[1];
+
+  try {
+    // 1. 获取验证记录
+    const { data: record, error: recordError } = await supabase
+      .from('verification_records')
+      .select('*')
+      .eq('id', recordId)
+      .eq('status', 'pending')
+      .single();
+
+    if (recordError || !record) {
+      await callTelegramApi('answerCallbackQuery', {
+        callback_query_id: callbackQuery.id,
+        text: '❌ 验证已过期或无效',
+        show_alert: true
+      });
+      return;
+    }
+
+    // 2. 检查是否过期
+    if (new Date(record.expires_at) < new Date()) {
+      await supabase
+        .from('verification_records')
+        .update({ status: 'expired' })
+        .eq('id', recordId);
+
+      await callTelegramApi('answerCallbackQuery', {
+        callback_query_id: callbackQuery.id,
+        text: '⏰ 验证已过期，请重新验证',
+        show_alert: true
+      });
+      return;
+    }
+
+    // 3. 获取频道ID
+    const channelId = record.challenge_data?.channel_id;
+    if (!channelId) {
+      await callTelegramApi('answerCallbackQuery', {
+        callback_query_id: callbackQuery.id,
+        text: '❌ 配置错误',
+        show_alert: true
+      });
+      return;
+    }
+
+    // 4. 检查用户是否关注了频道
+    const memberInfo = await callTelegramApi('getChatMember', {
+      chat_id: channelId,
+      user_id: userId
+    });
+
+    const isMember = ['member', 'administrator', 'creator'].includes(memberInfo.result?.status);
+
+    if (isMember) {
+      // 验证通过
+      await supabase
+        .from('verification_records')
+        .update({
+          status: 'passed',
+          completed_at: new Date().toISOString()
+        })
+        .eq('id', recordId);
+
+      // 解除禁言
+      await callTelegramApi('restrictChatMember', {
+        chat_id: chatId,
+        user_id: userId,
+        permissions: {
+          can_send_messages: true,
+          can_send_media_messages: true,
+          can_send_other_messages: true,
+          can_add_web_page_previews: true
+        }
+      });
+
+      await callTelegramApi('answerCallbackQuery', {
+        callback_query_id: callbackQuery.id,
+        text: '✅ 验证成功！欢迎加入！',
+        show_alert: true
+      });
+
+      // 更新验证消息
+      if (chatId && messageId) {
+        await callTelegramApi('editMessageText', {
+          chat_id: chatId,
+          message_id: messageId,
+          text: '✅ 验证成功！欢迎加入！'
+        });
+      }
+
+      console.log('User verified successfully:', userId);
+    } else {
+      // 未关注频道
+      const attemptCount = (record.attempt_count || 0) + 1;
+      const isExhausted = attemptCount >= (record.max_attempts || 3);
+
+      await supabase
+        .from('verification_records')
+        .update({
+          attempt_count: attemptCount,
+          status: isExhausted ? 'failed' : 'pending'
+        })
+        .eq('id', recordId);
+
+      if (isExhausted) {
+        await callTelegramApi('answerCallbackQuery', {
+          callback_query_id: callbackQuery.id,
+          text: '❌ 验证失败次数过多，请先关注频道后再试',
+          show_alert: true
+        });
+      } else {
+        await callTelegramApi('answerCallbackQuery', {
+          callback_query_id: callbackQuery.id,
+          text: '❌ 您还没有关注频道，请先关注后再验证',
+          show_alert: false
+        });
+      }
+    }
+  } catch (error) {
+    console.error('Error handling callback query:', error);
+    await callTelegramApi('answerCallbackQuery', {
+      callback_query_id: callbackQuery.id,
+      text: '❌ 处理失败，请重试',
+      show_alert: true
+    });
+  }
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Origin', '*');
 
@@ -189,6 +499,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     if (update.my_chat_member) {
       await handleBotAddedToGroup(update);
+      return res.status(200).json({ ok: true });
+    }
+
+    // 处理新成员加入群组
+    if (update.chat_member) {
+      await handleNewChatMember(update);
+      return res.status(200).json({ ok: true });
+    }
+
+    // 处理回调查询（验证按钮点击）
+    if (update.callback_query) {
+      await handleCallbackQuery(update);
       return res.status(200).json({ ok: true });
     }
 
