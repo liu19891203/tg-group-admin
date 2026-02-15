@@ -34,12 +34,21 @@ const handlers: Record<string, Handler> = {
   },
 
   'GET /admin/groups': async (req, res) => {
-    const { data, error } = await supabase.from('groups').select('*').eq('is_active', true);
+    const { data, error, count } = await supabase
+      .from('groups')
+      .select('*', { count: 'exact' })
+      .eq('is_active', true);
     if (error) {
       res.status(500).json({ error: error.message });
       return;
     }
-    res.json({ success: true, data });
+    res.json({ 
+      success: true, 
+      data: data || [],
+      total: count || 0,
+      page: 1,
+      limit: 100
+    });
   },
 
   'POST /admin/groups': async (req, res) => {
