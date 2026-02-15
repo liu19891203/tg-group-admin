@@ -1713,9 +1713,12 @@ async function handleCommand(chatId: number, userId: number | undefined, usernam
     case '/start':
       // 检查是否为私聊
       const chatType = message.chat?.type;
+      console.log(`[DEBUG] /start command received. Chat type: ${chatType}, Chat ID: ${chatId}`);
+      
       if (chatType === 'private') {
+        console.log('[DEBUG] Sending private chat start message with buttons');
         // 私聊中显示我的群组按钮
-        await callTelegramApi('sendMessage', {
+        const result = await callTelegramApi('sendMessage', {
           chat_id: chatId,
           text: `👋 你好 ${username}！\n\n我是群管机器人，可以帮助你管理群组。\n\n📌 快速开始：\n1. 将机器人添加到群组\n2. 在群组中发送 /settings 进行配置\n3. 或在下方点击「我的群组」管理已添加的群组`,
           reply_markup: {
@@ -1725,7 +1728,9 @@ async function handleCommand(chatId: number, userId: number | undefined, usernam
             ]
           }
         });
+        console.log('[DEBUG] Private start message result:', result.ok ? 'success' : 'failed');
       } else {
+        console.log('[DEBUG] Sending group chat start message');
         // 群组中显示普通帮助
         await callTelegramApi('sendMessage', {
           chat_id: chatId,
