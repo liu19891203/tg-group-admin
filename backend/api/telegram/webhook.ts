@@ -183,6 +183,214 @@ async function handleCommand(chatId: number, userId: number | undefined, usernam
   return false;
 }
 
+// 处理群组消息（广告过滤、自动回复等）
+async function handleGroupMessage(message: any) {
+  const chatId = message.chat.id;
+  const userId = message.from?.id;
+  const text = message.text || message.caption || '';
+
+  console.log('Group message:', { chatId, userId, text: text.substring(0, 50) });
+
+  try {
+    // 1. 获取群组信息
+    const { data: group } = await supabase
+      .from('groups')
+      .select('id, title')
+      .eq('chat_id', chatId)
+      .single();
+
+    if (!group) {
+      console.log('Group not found:', chatId);
+      return;
+    }
+
+    // 2. 获取群组配置
+    const { data: config } = await supabase
+      .from('group_configs')
+      .select('*')
+      .eq('group_id', group.id)
+      .single();
+
+    if (!config) {
+      return;
+    }
+
+    // 3. 检查广告过滤
+    if (config.ad_filter_enabled) {
+      const adKeywords = ['广告', '推广', '加群', '加微信', '二维码', '免费领', '兼职', '赚钱'];
+      const hasAd = adKeywords.some(keyword => text.includes(keyword));
+      
+      if (hasAd) {
+        console.log('Ad detected, deleting message:', message.message_id);
+        await callTelegramApi('deleteMessage', {
+          chat_id: chatId,
+          message_id: message.message_id
+        });
+        
+        await callTelegramApi('sendMessage', {
+          chat_id: chatId,
+          text: `⚠️ @${message.from?.username || message.from?.first_name} 的消息包含广告内容，已被删除。`
+        });
+        return;
+      }
+    }
+
+    // 4. 检查自动回复
+    if (config.auto_reply_enabled) {
+      const { data: rules } = await supabase
+        .from('auto_reply_rules')
+        .select('*')
+        .eq('group_id', group.id)
+        .eq('enabled', true);
+
+      if (rules) {
+        for (const rule of rules) {
+          const isMatch = rule.is_regex 
+            ? new RegExp(rule.keyword, 'i').test(text)
+            : text.toLowerCase().includes(rule.keyword.toLowerCase());
+
+          if (isMatch) {
+            console.log('Auto reply triggered:', rule.keyword);
+            await callTelegramApi('sendMessage', {
+              chat_id: chatId,
+              text: rule.reply_content,
+              reply_to_message_id: message.message_id
+            });
+            break;
+          }
+        }
+      }
+    }
+
+    // 5. 更新用户积分
+    if (config.points_enabled) {
+      const { data: userData } = await supabase
+        .from('users')
+        .select('id')
+        .eq('telegram_id', userId)
+        .single();
+
+      if (userData) {
+        await supabase
+          .from('group_members')
+          .upsert({
+            group_id: group.id,
+            user_id: userData.id,
+            message_count: supabase.rpc('increment', { x: 1 }),
+            last_message_at: new Date().toISOString()
+          }, {
+            onConflict: 'group_id,user_id'
+          });
+      }
+    }
+
+  } catch (error) {
+    console.error('Error handling group message:', error);
+  }
+}
+
+// 处理私聊消息（验证答案等）
+async function handlePrivateMessage(message: any) {
+  const userId = message.from?.id;
+  const text = message.text || '';
+
+  console.log('Private message:', { userId, text: text.substring(0, 50) });
+
+  try {
+    // 检查是否有待验证的记录
+    const { data: record } = await supabase
+      .from('verification_records')
+      .select('*, groups!inner(chat_id)')
+      .eq('telegram_id', userId)
+      .eq('status', 'pending')
+      .gt('expires_at', new Date().toISOString())
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .single();
+
+    if (!record) {
+      // 没有待验证记录，发送主菜单
+      await callTelegramApi('sendMessage', {
+        chat_id: userId,
+        text: `👋 你好！
+
+我是 Telegram 群管机器人。
+
+📌 可用命令：
+/start - 开始使用
+/help - 查看帮助
+
+请访问管理后台：
+${WEB_URL}`
+      });
+      return;
+    }
+
+    // 处理数学验证答案
+    if (record.verification_type === 'math') {
+      const answer = parseInt(text.trim());
+      const correctAnswer = 42; // 这里应该从 challenge_data 获取正确答案
+
+      if (answer === correctAnswer) {
+        // 验证通过
+        await supabase
+          .from('verification_records')
+          .update({
+            status: 'passed',
+            completed_at: new Date().toISOString()
+          })
+          .eq('id', record.id);
+
+        // 解除禁言
+        await callTelegramApi('restrictChatMember', {
+          chat_id: record.groups.chat_id,
+          user_id: userId,
+          permissions: {
+            can_send_messages: true,
+            can_send_media_messages: true,
+            can_send_other_messages: true,
+            can_add_web_page_previews: true
+          }
+        });
+
+        await callTelegramApi('sendMessage', {
+          chat_id: userId,
+          text: '✅ 验证成功！欢迎加入群组！'
+        });
+
+        console.log('User verified successfully:', userId);
+      } else {
+        // 答案错误
+        const attemptCount = (record.attempt_count || 0) + 1;
+        const isExhausted = attemptCount >= (record.max_attempts || 3);
+
+        await supabase
+          .from('verification_records')
+          .update({
+            attempt_count: attemptCount,
+            status: isExhausted ? 'failed' : 'pending'
+          })
+          .eq('id', record.id);
+
+        if (isExhausted) {
+          await callTelegramApi('sendMessage', {
+            chat_id: userId,
+            text: '❌ 验证失败次数过多，请重新加入群组。'
+          });
+        } else {
+          await callTelegramApi('sendMessage', {
+            chat_id: userId,
+            text: `❌ 答案错误，剩余 ${(record.max_attempts || 3) - attemptCount} 次尝试机会。`
+          });
+        }
+      }
+    }
+
+  } catch (error) {
+    console.error('Error handling private message:', error);
+  }
+}
+
 // 处理新成员加入群组
 async function handleNewChatMember(update: TelegramUpdate) {
   const chatMember = update.chat_member!;
@@ -524,8 +732,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const text = message.text || '';
     const username = message.from?.username || message.from?.first_name || 'User';
 
+    // 处理命令
     if (text.startsWith('/')) {
       await handleCommand(chatId, userId, username, text);
+      return res.status(200).json({ ok: true });
+    }
+
+    // 处理群组消息（广告过滤、自动回复等）
+    if (message.chat.type === 'group' || message.chat.type === 'supergroup') {
+      await handleGroupMessage(message);
+    } else if (message.chat.type === 'private') {
+      // 处理私聊消息（验证答案等）
+      await handlePrivateMessage(message);
     }
 
     return res.status(200).json({ ok: true });
