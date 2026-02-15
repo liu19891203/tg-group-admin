@@ -326,6 +326,202 @@ async function isGroupAdmin(chatId: number, userId: number): Promise<boolean> {
 }
 
 /**
+ * 获取用户的群组列表
+ * @param userTelegramId 用户的 Telegram ID
+ * @returns 用户管理的群组列表
+ */
+async function getUserGroups(userTelegramId: number): Promise<Array<{
+  groupId: string;
+  groupChatId: number;
+  groupTitle: string;
+  isAdmin: boolean;
+}>> {
+  const supabase = getSupabase();
+
+  // 查询用户的群组关联
+  const { data: relations, error } = await supabase
+    .from('user_group_relations')
+    .select('*')
+    .eq('user_telegram_id', userTelegramId)
+    .eq('is_active', true);
+
+  if (error) {
+    console.error('Error fetching user groups:', error);
+    return [];
+  }
+
+  // 验证每个群组的管理员身份
+  const validGroups = [];
+  for (const relation of relations || []) {
+    const isAdmin = await isGroupAdmin(relation.group_chat_id, userTelegramId);
+    if (isAdmin) {
+      validGroups.push({
+        groupId: relation.group_id,
+        groupChatId: relation.group_chat_id,
+        groupTitle: relation.group_title,
+        isAdmin: true
+      });
+    }
+  }
+
+  return validGroups;
+}
+
+/**
+ * 发送用户群组选择菜单
+ */
+async function sendUserGroupsMenu(chatId: number, userTelegramId: number): Promise<void> {
+  try {
+    // 获取用户的群组列表
+    const groups = await getUserGroups(userTelegramId);
+
+    if (groups.length === 0) {
+      await callTelegramApi('sendMessage', {
+        chat_id: chatId,
+        text: '👤 我的群组管理\n\n您还没有将机器人添加到任何群组，或者您已不是群组管理员。\n\n请将机器人添加到群组后重试。'
+      });
+      return;
+    }
+
+    // 生成群组列表文本
+    let text = '👤 我的群组管理\n\n请选择要管理的群组：\n\n';
+    groups.forEach((group, index) => {
+      text += `${index + 1}. 📢 ${group.groupTitle}\n`;
+    });
+
+    // 生成键盘按钮（每行1个群组）
+    const keyboard = groups.map(group => [{
+      text: `⚙️ ${group.groupTitle}`,
+      callback_data: `mygroup:${group.groupChatId}`
+    }]);
+
+    // 添加刷新和帮助按钮
+    keyboard.push([
+      { text: '🔄 刷新列表', callback_data: 'mygroups:refresh' },
+      { text: '❓ 帮助', callback_data: 'mygroups:help' }
+    ]);
+
+    await callTelegramApi('sendMessage', {
+      chat_id: chatId,
+      text: text,
+      reply_markup: { inline_keyboard: keyboard }
+    });
+  } catch (error) {
+    console.error('Error sending user groups menu:', error);
+    await callTelegramApi('sendMessage', {
+      chat_id: chatId,
+      text: '❌ 获取群组列表失败，请稍后重试'
+    });
+  }
+}
+
+/**
+ * 处理我的群组回调
+ */
+async function handleMyGroupsCallback(callbackQuery: any, data: string): Promise<void> {
+  const chatId = callbackQuery.message?.chat?.id;
+  const userId = callbackQuery.from?.id;
+
+  try {
+    // 解析 callback_data
+    const parts = data.split(':');
+    const action = parts[0];
+    const value = parts[1];
+
+    if (action === 'mygroups') {
+      // 处理 mygroups: 前缀的回调
+      switch (value) {
+        case 'refresh':
+          await callTelegramApi('answerCallbackQuery', {
+            callback_query_id: callbackQuery.id,
+            text: '🔄 正在刷新群组列表...'
+          });
+          // 重新发送群组列表
+          await sendUserGroupsMenu(chatId, userId);
+          break;
+
+        case 'help':
+          await callTelegramApi('answerCallbackQuery', {
+            callback_query_id: callbackQuery.id,
+            text: '📖 帮助信息'
+          });
+          await callTelegramApi('sendMessage', {
+            chat_id: chatId,
+            text: `📖 我的群组管理帮助
+
+• 点击群组名称可进入该群组的设置菜单
+• 使用 🔄 刷新列表可更新您的群组列表
+• 只有群组管理员才能看到和管理群组
+
+如需添加新群组，请将机器人添加到群组并授予管理员权限。`
+          });
+          break;
+
+        default:
+          await callTelegramApi('answerCallbackQuery', {
+            callback_query_id: callbackQuery.id,
+            text: '❌ 未知操作'
+          });
+      }
+    } else if (action === 'mygroup') {
+      // 处理 mygroup: 前缀的回调（选择特定群组）
+      const groupChatId = parseInt(value);
+
+      if (isNaN(groupChatId)) {
+        await callTelegramApi('answerCallbackQuery', {
+          callback_query_id: callbackQuery.id,
+          text: '❌ 无效的群组ID',
+          show_alert: true
+        });
+        return;
+      }
+
+      // 验证用户是否仍然是该群组的管理员
+      const isAdmin = await isGroupAdmin(groupChatId, userId);
+      if (!isAdmin) {
+        await callTelegramApi('answerCallbackQuery', {
+          callback_query_id: callbackQuery.id,
+          text: '⚠️ 您已不是该群组的管理员',
+          show_alert: true
+        });
+        return;
+      }
+
+      await callTelegramApi('answerCallbackQuery', {
+        callback_query_id: callbackQuery.id,
+        text: '⚙️ 正在打开群组设置...'
+      });
+
+      // 获取群组信息
+      try {
+        const chatInfo = await callTelegramApi('getChat', {
+          chat_id: groupChatId
+        });
+
+        const groupName = chatInfo.result?.title || '未知群组';
+
+        // 发送该群组的设置菜单，传入 groupChatId 作为 targetChatId
+        // 这样在私聊中配置时，所有修改都会应用到这个指定的群组
+        await sendSettingsMenu(chatId, groupName, groupChatId);
+      } catch (error) {
+        console.error('Error getting chat info:', error);
+        await callTelegramApi('sendMessage', {
+          chat_id: chatId,
+          text: '❌ 无法获取群组信息，请稍后重试'
+        });
+      }
+    }
+  } catch (error) {
+    console.error('Error handling mygroups callback:', error);
+    await callTelegramApi('answerCallbackQuery', {
+      callback_query_id: callbackQuery.id,
+      text: '❌ 操作失败，请重试',
+      show_alert: true
+    });
+  }
+}
+
+/**
  * 获取功能状态文本
  */
 function getFeatureStatusText(featureId: string, featureStatus: Record<string, boolean>): string {
@@ -335,8 +531,9 @@ function getFeatureStatusText(featureId: string, featureStatus: Record<string, b
 
 /**
  * 生成设置菜单的 Inline Keyboard
+ * @param targetChatId - 目标群组ID（私聊中使用）
  */
-function generateSettingsKeyboard(): any[][] {
+function generateSettingsKeyboard(targetChatId?: number): any[][] {
   const keyboard: any[][] = [];
   
   // 按级别分组功能
@@ -344,72 +541,85 @@ function generateSettingsKeyboard(): any[][] {
   const intermediateFeatures = MENU_FEATURES.filter(f => f.level === 'intermediate');
   const advancedFeatures = MENU_FEATURES.filter(f => f.level === 'advanced');
   
+  // 构建 callback_data 后缀（用于传递 targetChatId）
+  const targetSuffix = targetChatId ? `:${targetChatId}` : '';
+  
   // 初级功能 - 每行2个按钮
   for (let i = 0; i < basicFeatures.length; i += 2) {
     const row = [];
     row.push({
       text: `${basicFeatures[i].icon} ${basicFeatures[i].name}`,
-      callback_data: `menu:${basicFeatures[i].id}:toggle`
+      callback_data: `menu:${basicFeatures[i].id}:toggle${targetSuffix}`
     });
     if (basicFeatures[i + 1]) {
       row.push({
         text: `${basicFeatures[i + 1].icon} ${basicFeatures[i + 1].name}`,
-        callback_data: `menu:${basicFeatures[i + 1].id}:toggle`
+        callback_data: `menu:${basicFeatures[i + 1].id}:toggle${targetSuffix}`
       });
     }
     keyboard.push(row);
   }
   
   // 分隔行
-  keyboard.push([{ text: '──────────────', callback_data: 'menu:separator:none' }]);
+  keyboard.push([{ text: '──────────────', callback_data: `menu:separator:none${targetSuffix}` }]);
   
   // 中级功能 - 每行2个按钮
   for (let i = 0; i < intermediateFeatures.length; i += 2) {
     const row = [];
     row.push({
       text: `${intermediateFeatures[i].icon} ${intermediateFeatures[i].name}`,
-      callback_data: `menu:${intermediateFeatures[i].id}:config`
+      callback_data: `menu:${intermediateFeatures[i].id}:config${targetSuffix}`
     });
     if (intermediateFeatures[i + 1]) {
       row.push({
         text: `${intermediateFeatures[i + 1].icon} ${intermediateFeatures[i + 1].name}`,
-        callback_data: `menu:${intermediateFeatures[i + 1].id}:config`
+        callback_data: `menu:${intermediateFeatures[i + 1].id}:config${targetSuffix}`
       });
     }
     keyboard.push(row);
   }
   
   // 分隔行
-  keyboard.push([{ text: '──────────────', callback_data: 'menu:separator:none' }]);
+  keyboard.push([{ text: '──────────────', callback_data: `menu:separator:none${targetSuffix}` }]);
   
   // 高级功能 - 每行2个按钮
   for (let i = 0; i < advancedFeatures.length; i += 2) {
     const row = [];
     row.push({
       text: `${advancedFeatures[i].icon} ${advancedFeatures[i].name}`,
-      callback_data: `menu:${advancedFeatures[i].id}:config`
+      callback_data: `menu:${advancedFeatures[i].id}:config${targetSuffix}`
     });
     if (advancedFeatures[i + 1]) {
       row.push({
         text: `${advancedFeatures[i + 1].icon} ${advancedFeatures[i + 1].name}`,
-        callback_data: `menu:${advancedFeatures[i + 1].id}:config`
+        callback_data: `menu:${advancedFeatures[i + 1].id}:config${targetSuffix}`
       });
     }
     keyboard.push(row);
   }
   
   // 返回按钮
-  keyboard.push([{ text: '🔙 返回', callback_data: 'menu:back:main' }]);
+  keyboard.push([{ text: '🔙 返回', callback_data: `menu:back:main${targetSuffix}` }]);
   
   return keyboard;
 }
 
 /**
  * 发送设置菜单
+ * @param chatId - 聊天ID（私聊中为用户的chat_id，群组中为群组的chat_id）
+ * @param groupName - 群组名称
+ * @param targetChatId - 目标群组ID（私聊中使用，表示要配置的群组）
  */
-async function sendSettingsMenu(chatId: number, groupName: string = '当前群组'): Promise<void> {
+async function sendSettingsMenu(
+  chatId: number, 
+  groupName: string = '当前群组',
+  targetChatId?: number
+): Promise<void> {
+  // 使用 targetChatId 或 chatId 获取功能状态
+  const actualChatId = targetChatId || chatId;
+  
   // 从数据库获取功能状态
-  const featureStatus = await getFeatureStatus(chatId);
+  const featureStatus = await getFeatureStatus(actualChatId);
   
   // 生成状态概览文本
   const basicFeatures = MENU_FEATURES.filter(f => f.level === 'basic');
@@ -426,7 +636,8 @@ ${statusOverview}
 
 选择你想改变的设置，更多帮助请访问群组频道`;
   
-  const keyboard = generateSettingsKeyboard();
+  // 传递 targetChatId 以便在 callback_data 中编码
+  const keyboard = generateSettingsKeyboard(targetChatId);
   
   await callTelegramApi('sendMessage', {
     chat_id: chatId,
@@ -445,16 +656,24 @@ async function handleMenuCallback(callbackQuery: any, data: string): Promise<voi
   const chatId = callbackQuery.message?.chat?.id;
   const userId = callbackQuery.from?.id;
   const messageId = callbackQuery.message?.message_id;
+  const chatType = callbackQuery.message?.chat?.type;
   
-  // 解析 callback_data: menu:{feature}:{action}
+  // 解析 callback_data: menu:{feature}:{action}:{targetChatId?}
   const parts = data.split(':');
   if (parts.length < 3) return;
   
   const featureId = parts[1];
   const action = parts[2];
+  // 解析目标群组ID（如果有）- 格式: menu:feature:action:targetChatId
+  const targetChatId = parts[3] ? parseInt(parts[3]) : undefined;
   
-  // 检查管理员权限
-  const isAdmin = await isGroupAdmin(chatId, userId);
+  // 确定实际要操作的群组ID
+  // 如果有 targetChatId，说明是在私聊中配置指定群组
+  // 否则使用当前聊天ID（群组内直接使用）
+  const actualChatId = targetChatId || chatId;
+  
+  // 检查管理员权限（在目标群组中检查）
+  const isAdmin = await isGroupAdmin(actualChatId, userId);
   if (!isAdmin) {
     await callTelegramApi('answerCallbackQuery', {
       callback_query_id: callbackQuery.id,
@@ -482,8 +701,8 @@ async function handleMenuCallback(callbackQuery: any, data: string): Promise<voi
       text: '🔙 返回主菜单'
     });
     
-    // 更新为主菜单
-    await updateSettingsMenu(chatId, messageId);
+    // 更新为主菜单，传递 targetChatId 保持上下文
+    await updateSettingsMenu(chatId, messageId, targetChatId);
     return;
   }
   
@@ -501,13 +720,13 @@ async function handleMenuCallback(callbackQuery: any, data: string): Promise<voi
   
   switch (action) {
     case 'toggle':
-      // 从数据库获取当前功能状态
-      const featureStatus = await getFeatureStatus(chatId);
+      // 从数据库获取当前功能状态（使用 actualChatId）
+      const featureStatus = await getFeatureStatus(actualChatId);
       const currentStatus = featureStatus[featureId] ?? false;
       const newStatus = !currentStatus;
       
-      // 更新数据库中的功能状态
-      const updateSuccess = await updateFeatureStatus(chatId, featureId, newStatus);
+      // 更新数据库中的功能状态（使用 actualChatId）
+      const updateSuccess = await updateFeatureStatus(actualChatId, featureId, newStatus);
       
       if (!updateSuccess) {
         await callTelegramApi('answerCallbackQuery', {
@@ -524,8 +743,8 @@ async function handleMenuCallback(callbackQuery: any, data: string): Promise<voi
         show_alert: false
       });
       
-      // 更新菜单显示
-      await updateSettingsMenu(chatId, messageId);
+      // 更新菜单显示，传递 targetChatId 保持上下文
+      await updateSettingsMenu(chatId, messageId, targetChatId);
       break;
       
     case 'config':
@@ -536,28 +755,41 @@ async function handleMenuCallback(callbackQuery: any, data: string): Promise<voi
           text: `⚙️ 进入 ${feature?.name} 配置...`
         });
         
-        // 显示子菜单
-        await sendFeatureConfigMenu(chatId, messageId, featureId);
+        // 显示子菜单，传递 targetChatId
+        await sendFeatureConfigMenu(chatId, messageId, featureId, targetChatId);
       } else {
-        // 初级功能直接切换
-        const currentStatus = mockFeatureStatus[featureId] ?? false;
-        mockFeatureStatus[featureId] = !currentStatus;
+        // 初级功能直接切换（也使用 actualChatId）
+        const featureStatus = await getFeatureStatus(actualChatId);
+        const currentStatus = featureStatus[featureId] ?? false;
+        const newStatus = !currentStatus;
+        
+        // 更新数据库
+        const updateSuccess = await updateFeatureStatus(actualChatId, featureId, newStatus);
+        
+        if (!updateSuccess) {
+          await callTelegramApi('answerCallbackQuery', {
+            callback_query_id: callbackQuery.id,
+            text: '❌ 更新功能状态失败，请重试',
+            show_alert: true
+          });
+          return;
+        }
         
         await callTelegramApi('answerCallbackQuery', {
           callback_query_id: callbackQuery.id,
-          text: `${feature?.icon} ${feature?.name} 已${!currentStatus ? '开启' : '关闭'}`,
+          text: `${feature?.icon} ${feature?.name} 已${newStatus ? '开启' : '关闭'}`,
           show_alert: false
         });
         
-        // 更新菜单显示
-        await updateSettingsMenu(chatId, messageId);
+        // 更新菜单显示，传递 targetChatId 保持上下文
+        await updateSettingsMenu(chatId, messageId, targetChatId);
       }
       break;
       
     default:
       // 处理子菜单的其他操作
       if (featureLevel === 'intermediate' || featureLevel === 'advanced') {
-        await handleSubMenuCallback(callbackQuery, featureId, action);
+        await handleSubMenuCallback(callbackQuery, featureId, action, targetChatId);
       } else {
         await callTelegramApi('answerCallbackQuery', {
           callback_query_id: callbackQuery.id,
@@ -569,10 +801,16 @@ async function handleMenuCallback(callbackQuery: any, data: string): Promise<voi
 
 /**
  * 更新设置菜单
+ * @param chatId - 聊天ID
+ * @param messageId - 消息ID
+ * @param targetChatId - 目标群组ID（私聊中使用）
  */
-async function updateSettingsMenu(chatId: number, messageId: number): Promise<void> {
+async function updateSettingsMenu(chatId: number, messageId: number, targetChatId?: number): Promise<void> {
+  // 使用 targetChatId 或 chatId 获取功能状态
+  const actualChatId = targetChatId || chatId;
+  
   // 从数据库获取功能状态
-  const featureStatus = await getFeatureStatus(chatId);
+  const featureStatus = await getFeatureStatus(actualChatId);
   
   const basicFeatures = MENU_FEATURES.filter(f => f.level === 'basic');
   const statusOverview = basicFeatures
@@ -588,7 +826,8 @@ ${statusOverview}
 
 选择你想改变的设置，更多帮助请访问群组频道`;
   
-  const keyboard = generateSettingsKeyboard();
+  // 传递 targetChatId 以保持上下文
+  const keyboard = generateSettingsKeyboard(targetChatId);
   
   await callTelegramApi('editMessageText', {
     chat_id: chatId,
@@ -695,11 +934,16 @@ const FEATURE_SUBMENU_CONFIG: Record<string, SubMenuConfig[]> = {
 
 /**
  * 生成子菜单的 Inline Keyboard
+ * @param featureId - 功能ID
+ * @param targetChatId - 目标群组ID（私聊中使用）
  */
-function generateSubMenuKeyboard(featureId: string): any[][] {
+function generateSubMenuKeyboard(featureId: string, targetChatId?: number): any[][] {
   const keyboard: any[][] = [];
   const feature = MENU_FEATURES.find(f => f.id === featureId);
   const configItems = FEATURE_SUBMENU_CONFIG[featureId] || [];
+  
+  // 构建 callback_data 后缀（用于传递 targetChatId）
+  const targetSuffix = targetChatId ? `:${targetChatId}` : '';
   
   // 添加配置项按钮 - 每行2个
   for (let i = 0; i < configItems.length; i += 2) {
@@ -707,14 +951,14 @@ function generateSubMenuKeyboard(featureId: string): any[][] {
     const item1 = configItems[i];
     row.push({
       text: `${item1.icon || '•'} ${item1.label}`,
-      callback_data: `menu:${featureId}:${item1.action}`
+      callback_data: `menu:${featureId}:${item1.action}${targetSuffix}`
     });
     
     if (configItems[i + 1]) {
       const item2 = configItems[i + 1];
       row.push({
         text: `${item2.icon || '•'} ${item2.label}`,
-        callback_data: `menu:${featureId}:${item2.action}`
+        callback_data: `menu:${featureId}:${item2.action}${targetSuffix}`
       });
     }
     keyboard.push(row);
@@ -722,19 +966,18 @@ function generateSubMenuKeyboard(featureId: string): any[][] {
   
   // 分隔行
   if (configItems.length > 0) {
-    keyboard.push([{ text: '──────────────', callback_data: 'menu:separator:none' }]);
+    keyboard.push([{ text: '──────────────', callback_data: `menu:separator:none${targetSuffix}` }]);
   }
   
   // 切换开关和返回按钮
-  const isEnabled = mockFeatureStatus[featureId] ?? false;
   keyboard.push([
     { 
-      text: isEnabled ? '🔴 关闭功能' : '🟢 开启功能', 
-      callback_data: `menu:${featureId}:toggle` 
+      text: '🟢 切换开关', 
+      callback_data: `menu:${featureId}:toggle${targetSuffix}` 
     },
     { 
       text: '🔙 返回', 
-      callback_data: 'menu:back:main' 
+      callback_data: `menu:back:main${targetSuffix}` 
     }
   ]);
   
@@ -743,18 +986,29 @@ function generateSubMenuKeyboard(featureId: string): any[][] {
 
 /**
  * 发送功能配置子菜单
+ * @param chatId - 聊天ID
+ * @param messageId - 消息ID（null表示发送新消息）
+ * @param featureId - 功能ID
+ * @param targetChatId - 目标群组ID（私聊中使用）
  */
 async function sendFeatureConfigMenu(
   chatId: number, 
   messageId: number | null, 
-  featureId: string
+  featureId: string,
+  targetChatId?: number
 ): Promise<void> {
   const feature = MENU_FEATURES.find(f => f.id === featureId);
   if (!feature) {
     throw new Error(`Feature not found: ${featureId}`);
   }
   
-  const isEnabled = mockFeatureStatus[featureId] ?? false;
+  // 使用 targetChatId 或 chatId 获取功能状态
+  const actualChatId = targetChatId || chatId;
+  
+  // 从数据库获取功能状态
+  const featureStatus = await getFeatureStatus(actualChatId);
+  const isEnabled = featureStatus[featureId] ?? false;
+  
   const statusText = isEnabled ? '✅ 已开启' : '❌ 已关闭';
   const levelText = feature.level === 'intermediate' ? '中级功能' : '高级功能';
   
@@ -766,7 +1020,8 @@ ${levelText} | 当前状态: ${statusText}
 
 🚧 此功能正在开发中，敬请期待完整版！`;
   
-  const keyboard = generateSubMenuKeyboard(featureId);
+  // 传递 targetChatId 以保持上下文
+  const keyboard = generateSubMenuKeyboard(featureId, targetChatId);
   
   if (messageId) {
     // 更新现有消息
@@ -794,15 +1049,23 @@ ${levelText} | 当前状态: ${statusText}
 
 /**
  * 处理子菜单按钮回调
+ * @param callbackQuery - 回调查询对象
+ * @param featureId - 功能ID
+ * @param action - 操作类型
+ * @param targetChatId - 目标群组ID（私聊中使用）
  */
 async function handleSubMenuCallback(
   callbackQuery: any, 
   featureId: string, 
-  action: string
+  action: string,
+  targetChatId?: number
 ): Promise<void> {
   const chatId = callbackQuery.message?.chat?.id;
   const messageId = callbackQuery.message?.message_id;
   const feature = MENU_FEATURES.find(f => f.id === featureId);
+  
+  // 确定实际要操作的群组ID
+  const actualChatId = targetChatId || chatId;
   
   if (!feature) {
     await callTelegramApi('answerCallbackQuery', {
@@ -815,17 +1078,31 @@ async function handleSubMenuCallback(
   
   // 处理切换开关
   if (action === 'toggle') {
-    const currentStatus = mockFeatureStatus[featureId] ?? false;
-    mockFeatureStatus[featureId] = !currentStatus;
+    // 从数据库获取当前功能状态
+    const featureStatus = await getFeatureStatus(actualChatId);
+    const currentStatus = featureStatus[featureId] ?? false;
+    const newStatus = !currentStatus;
+    
+    // 更新数据库中的功能状态
+    const updateSuccess = await updateFeatureStatus(actualChatId, featureId, newStatus);
+    
+    if (!updateSuccess) {
+      await callTelegramApi('answerCallbackQuery', {
+        callback_query_id: callbackQuery.id,
+        text: '❌ 更新功能状态失败，请重试',
+        show_alert: true
+      });
+      return;
+    }
     
     await callTelegramApi('answerCallbackQuery', {
       callback_query_id: callbackQuery.id,
-      text: `${feature.icon} ${feature.name} 已${!currentStatus ? '开启' : '关闭'}`,
+      text: `${feature.icon} ${feature.name} 已${newStatus ? '开启' : '关闭'}`,
       show_alert: false
     });
     
-    // 更新子菜单显示
-    await sendFeatureConfigMenu(chatId, messageId, featureId);
+    // 更新子菜单显示，传递 targetChatId 保持上下文
+    await sendFeatureConfigMenu(chatId, messageId, featureId, targetChatId);
     return;
   }
   
@@ -836,8 +1113,8 @@ async function handleSubMenuCallback(
       text: '🔙 返回主菜单'
     });
     
-    // 更新为主菜单
-    await updateSettingsMenu(chatId, messageId);
+    // 更新为主菜单，传递 targetChatId 保持上下文
+    await updateSettingsMenu(chatId, messageId, targetChatId);
     return;
   }
   
@@ -958,12 +1235,13 @@ async function handleBotAddedToGroup(update: TelegramUpdate) {
   const chatMember = update.my_chat_member!;
   const chat = chatMember.chat;
   const newStatus = chatMember.new_chat_member.status;
+  const addedByUser = chatMember.from;
 
-  console.log('Bot added to group:', { chatId: chat.id, title: chat.title, newStatus });
+  console.log('Bot added to group:', { chatId: chat.id, title: chat.title, newStatus, addedBy: addedByUser?.id });
 
   if (newStatus === 'member' || newStatus === 'administrator') {
     const supabase = getSupabase();
-    
+
     // Create or update group
     const { data: group, error } = await supabase
       .from('groups')
@@ -984,11 +1262,48 @@ async function handleBotAddedToGroup(update: TelegramUpdate) {
 
     console.log('Group created/updated:', group);
 
+    // 记录添加者信息
+    if (addedByUser?.id) {
+      try {
+        await createUserGroupRelation(addedByUser.id, chat.id, group.id, chat.title || 'Unknown');
+        console.log('User-group relation created for adder:', addedByUser.id);
+      } catch (relationError) {
+        console.error('Error creating user-group relation:', relationError);
+      }
+    }
+
     // Send welcome message
     await callTelegramApi('sendMessage', {
       chat_id: chat.id,
       text: `👋 你好！我是群管机器人。\n\n请访问管理后台配置功能：\nhttps://tg-group-admin.vercel.app\n\n群组ID: ${chat.id}`
     });
+  }
+}
+
+/**
+ * 创建用户与群组的关联关系
+ */
+async function createUserGroupRelation(
+  userTelegramId: number,
+  groupChatId: number,
+  groupId: string,
+  groupTitle: string
+): Promise<void> {
+  const supabase = getSupabase();
+
+  const { error } = await supabase
+    .from('user_group_relations')
+    .upsert({
+      user_telegram_id: userTelegramId,
+      group_id: groupId,
+      group_chat_id: groupChatId,
+      group_title: groupTitle,
+      is_active: true
+    }, { onConflict: 'user_telegram_id, group_chat_id' });
+
+  if (error) {
+    console.error('Error upserting user_group_relations:', error);
+    throw error;
   }
 }
 
@@ -1140,6 +1455,20 @@ async function handleCallbackQuery(update: TelegramUpdate) {
 
   console.log('Callback query:', { data, userId, chatId });
 
+  // Handle mygroups button clicks
+  if (data?.startsWith('mygroup:') || data?.startsWith('mygroups:')) {
+    if (!chatId) {
+      await callTelegramApi('answerCallbackQuery', {
+        callback_query_id: callbackQuery.id,
+        text: '❌ 无法获取聊天信息'
+      });
+      return;
+    }
+
+    await handleMyGroupsCallback(callbackQuery, data);
+    return;
+  }
+
   // Handle menu button clicks
   if (data?.startsWith('menu:')) {
     if (!chatId) {
@@ -1267,14 +1596,14 @@ async function handleCommand(chatId: number, userId: number | undefined, usernam
     case '/start':
       await callTelegramApi('sendMessage', {
         chat_id: chatId,
-        text: `👋 你好 ${username}！\n\n我是群管机器人。\n\n📌 可用命令：\n/start - 开始使用\n/help - 查看帮助\n/checkin - 每日签到\n/me - 个人信息\n/rank - 排行榜`
+        text: `👋 你好 ${username}！\n\n我是群管机器人。\n\n📌 可用命令：\n/start - 开始使用\n/help - 查看帮助\n/mygroups - 我的群组管理\n/checkin - 每日签到\n/me - 个人信息\n/rank - 排行榜`
       });
       break;
 
     case '/help':
       await callTelegramApi('sendMessage', {
         chat_id: chatId,
-        text: `📖 帮助信息\n\n📌 可用命令：\n/start - 开始使用\n/help - 查看帮助\n/checkin - 每日签到\n/me - 个人信息\n/rank - 排行榜\n/reload - 刷新信息`
+        text: `📖 帮助信息\n\n📌 可用命令：\n/start - 开始使用\n/help - 查看帮助\n/mygroups - 我的群组管理\n/checkin - 每日签到\n/me - 个人信息\n/rank - 排行榜\n/reload - 刷新信息`
       });
       break;
 
@@ -1301,6 +1630,17 @@ async function handleCommand(chatId: number, userId: number | undefined, usernam
 
     case '/settings':
       await handleSettingsCommand(chatId, userId, message);
+      break;
+
+    case '/mygroups':
+      if (!userId) {
+        await callTelegramApi('sendMessage', {
+          chat_id: chatId,
+          text: '❌ 无法获取用户信息'
+        });
+        break;
+      }
+      await sendUserGroupsMenu(chatId, userId);
       break;
 
     default:
@@ -1448,9 +1788,15 @@ async function handlePrivateMessage(message: any) {
     return;
   }
 
+  // Handle /mygroups command
+  if (text === '/mygroups') {
+    await sendUserGroupsMenu(chatId, userId);
+    return;
+  }
+
   // Default response
   await callTelegramApi('sendMessage', {
     chat_id: chatId,
-    text: `👋 你好！\n\n我是群管机器人。\n\n📌 可用命令：\n/start - 开始使用\n/help - 查看帮助\n\n管理后台：\nhttps://tg-group-admin.vercel.app`
+    text: `👋 你好！\n\n我是群管机器人。\n\n📌 可用命令：\n/start - 开始使用\n/help - 查看帮助\n/mygroups - 我的群组管理\n\n管理后台：\nhttps://tg-group-admin.vercel.app`
   });
 }

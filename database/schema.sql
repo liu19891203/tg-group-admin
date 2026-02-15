@@ -504,3 +504,23 @@ ON CONFLICT (username) DO NOTHING;
 -- ALTER TABLE group_configs ADD COLUMN IF NOT EXISTS invite_links_enabled BOOLEAN DEFAULT false;
 -- ALTER TABLE group_configs ADD COLUMN IF NOT EXISTS lottery_enabled BOOLEAN DEFAULT false;
 -- ALTER TABLE group_configs ADD COLUMN IF NOT EXISTS verified_users_enabled BOOLEAN DEFAULT false;
+
+-- ============================================
+-- User-Group Relations Table
+-- 用户-群组关联表：记录用户与群组的关系，支持跨群组用户追踪
+-- ============================================
+
+CREATE TABLE IF NOT EXISTS user_group_relations (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_telegram_id BIGINT NOT NULL,
+    group_id UUID REFERENCES groups(id) ON DELETE CASCADE,
+    group_chat_id BIGINT NOT NULL,
+    group_title TEXT,
+    added_at TIMESTAMPTZ DEFAULT NOW(),
+    is_active BOOLEAN DEFAULT true,
+    CONSTRAINT unique_user_group_relation UNIQUE (user_telegram_id, group_chat_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_relations ON user_group_relations(user_telegram_id);
+CREATE INDEX IF NOT EXISTS idx_group_relations ON user_group_relations(group_chat_id);
+CREATE INDEX IF NOT EXISTS idx_user_group_active ON user_group_relations(user_telegram_id, is_active);
