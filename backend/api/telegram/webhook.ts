@@ -146,6 +146,67 @@ async function getFeatureStatus(chatId: number): Promise<Record<string, boolean>
 }
 
 /**
+ * 确保群组记录在数据库中存在
+ */
+async function ensureGroupExists(chatId: number): Promise<string | null> {
+  const supabase = getSupabase();
+  
+  // 先查询群组是否存在
+  const { data: existingGroup } = await supabase
+    .from('groups')
+    .select('id')
+    .eq('chat_id', chatId)
+    .single();
+  
+  if (existingGroup) {
+    return existingGroup.id;
+  }
+  
+  // 群组不存在，尝试从 Telegram 获取群组信息
+  try {
+    const botToken = getBotToken();
+    const response = await fetch(`https://api.telegram.org/bot${botToken}/getChat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: chatId })
+    });
+    const data = await response.json();
+    
+    if (!data.ok) {
+      console.error('Failed to get chat info from Telegram:', data);
+      return null;
+    }
+    
+    const chat = data.result;
+    
+    // 创建群组记录
+    const { data: newGroup, error } = await supabase
+      .from('groups')
+      .insert({
+        chat_id: chatId,
+        chat_type: chat.type === 'supergroup' ? 'supergroup' : 'group',
+        title: chat.title || 'Unknown Group',
+        username: chat.username,
+        is_active: true,
+        member_count: chat.member_count || 0
+      })
+      .select('id')
+      .single();
+    
+    if (error) {
+      console.error('Error creating group:', error);
+      return null;
+    }
+    
+    console.log('Auto-created group:', newGroup.id);
+    return newGroup.id;
+  } catch (error) {
+    console.error('Error ensuring group exists:', error);
+    return null;
+  }
+}
+
+/**
  * 更新数据库中的功能状态
  */
 async function updateFeatureStatus(chatId: number, featureId: string, enabled: boolean): Promise<boolean> {
@@ -157,15 +218,10 @@ async function updateFeatureStatus(chatId: number, featureId: string, enabled: b
   
   const supabase = getSupabase();
   
-  // 先通过 chat_id 查询 groups 表获取 group_id
-  const { data: group, error: groupError } = await supabase
-    .from('groups')
-    .select('id')
-    .eq('chat_id', chatId)
-    .single();
-  
-  if (groupError || !group) {
-    console.error('Error getting group:', groupError);
+  // 确保群组存在（自动创建）
+  const groupId = await ensureGroupExists(chatId);
+  if (!groupId) {
+    console.error('Failed to ensure group exists for chatId:', chatId);
     return false;
   }
   
@@ -173,7 +229,7 @@ async function updateFeatureStatus(chatId: number, featureId: string, enabled: b
   const { data: existingConfig } = await supabase
     .from('group_configs')
     .select('id')
-    .eq('group_id', group.id)
+    .eq('group_id', groupId)
     .single();
   
   let result;
@@ -181,7 +237,7 @@ async function updateFeatureStatus(chatId: number, featureId: string, enabled: b
   if (!existingConfig) {
     // 记录不存在，先创建记录
     const insertData: Record<string, any> = {
-      group_id: group.id,
+      group_id: groupId,
       [dbField]: enabled
     };
     
@@ -193,7 +249,7 @@ async function updateFeatureStatus(chatId: number, featureId: string, enabled: b
     result = await supabase
       .from('group_configs')
       .update({ [dbField]: enabled })
-      .eq('group_id', group.id);
+      .eq('group_id', groupId);
   }
   
   if (result.error) {
@@ -962,17 +1018,19 @@ async function handleNewChatMember(update: TelegramUpdate) {
 
   const supabase = getSupabase();
 
-  // Get group
+  // 确保群组存在（自动创建）
+  const groupId = await ensureGroupExists(chat.id);
+  if (!groupId) {
+    console.log('Failed to ensure group exists:', chat.id);
+    return;
+  }
+  
+  // 获取群组信息
   const { data: group } = await supabase
     .from('groups')
     .select('id, title')
-    .eq('chat_id', chat.id)
+    .eq('id', groupId)
     .single();
-
-  if (!group) {
-    console.log('Group not found:', chat.id);
-    return;
-  }
 
   // Get verification config
   const { data: config } = await supabase
