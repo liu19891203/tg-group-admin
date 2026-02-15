@@ -46,6 +46,32 @@ CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
 CREATE TABLE IF NOT EXISTS group_configs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     group_id UUID NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+    -- Feature toggle fields (24 features)
+    verification_enabled BOOLEAN DEFAULT false,
+    welcome_enabled BOOLEAN DEFAULT false,
+    auto_reply_enabled BOOLEAN DEFAULT false,
+    auto_delete_enabled BOOLEAN DEFAULT false,
+    auto_ban_enabled BOOLEAN DEFAULT false,
+    auto_warn_enabled BOOLEAN DEFAULT false,
+    auto_mute_enabled BOOLEAN DEFAULT false,
+    flood_control_enabled BOOLEAN DEFAULT false,
+    ad_block_enabled BOOLEAN DEFAULT false,
+    command_disable_enabled BOOLEAN DEFAULT false,
+    crypto_enabled BOOLEAN DEFAULT false,
+    members_enabled BOOLEAN DEFAULT false,
+    scheduled_msg_enabled BOOLEAN DEFAULT false,
+    points_enabled BOOLEAN DEFAULT false,
+    activity_stats_enabled BOOLEAN DEFAULT false,
+    entertainment_enabled BOOLEAN DEFAULT false,
+    usdt_price_enabled BOOLEAN DEFAULT false,
+    channel_link_enabled BOOLEAN DEFAULT false,
+    admin_perms_enabled BOOLEAN DEFAULT false,
+    nsfw_detection_enabled BOOLEAN DEFAULT false,
+    language_whitelist_enabled BOOLEAN DEFAULT false,
+    invite_links_enabled BOOLEAN DEFAULT false,
+    lottery_enabled BOOLEAN DEFAULT false,
+    verified_users_enabled BOOLEAN DEFAULT false,
+    -- Config JSON fields
     welcome_config JSONB DEFAULT '{}'::jsonb,
     verification_config JSONB DEFAULT '{"enabled": false, "type": "channel", "timeout": 300, "punishment": "kick"}'::jsonb,
     anti_ads_config JSONB DEFAULT '{"enabled": false, "keywords": [], "regex_patterns": [], "whitelist_users": [], "punishment": "delete", "warn_limit": 3, "warn_message": "⚠️ 您的消息包含广告内容，已被删除。", "delete_original": true, "sticker_ads": true, "keyword_ads": true, "link_ads": true, "image_ads": false}'::jsonb,
@@ -448,3 +474,33 @@ CREATE TRIGGER update_lotteries_updated_at BEFORE UPDATE ON lotteries
 INSERT INTO admins (username, password_hash, display_name, level, is_active)
 VALUES ('admin', '$2b$10$YourHashedPasswordHere', 'Administrator', 9, true)
 ON CONFLICT (username) DO NOTHING;
+
+-- ============================================
+-- Migration: Add feature toggle fields to group_configs
+-- For existing tables, run these ALTER TABLE statements
+-- ============================================
+
+-- ALTER TABLE group_configs ADD COLUMN IF NOT EXISTS verification_enabled BOOLEAN DEFAULT false;
+-- ALTER TABLE group_configs ADD COLUMN IF NOT EXISTS welcome_enabled BOOLEAN DEFAULT false;
+-- ALTER TABLE group_configs ADD COLUMN IF NOT EXISTS auto_reply_enabled BOOLEAN DEFAULT false;
+-- ALTER TABLE group_configs ADD COLUMN IF NOT EXISTS auto_delete_enabled BOOLEAN DEFAULT false;
+-- ALTER TABLE group_configs ADD COLUMN IF NOT EXISTS auto_ban_enabled BOOLEAN DEFAULT false;
+-- ALTER TABLE group_configs ADD COLUMN IF NOT EXISTS auto_warn_enabled BOOLEAN DEFAULT false;
+-- ALTER TABLE group_configs ADD COLUMN IF NOT EXISTS auto_mute_enabled BOOLEAN DEFAULT false;
+-- ALTER TABLE group_configs ADD COLUMN IF NOT EXISTS flood_control_enabled BOOLEAN DEFAULT false;
+-- ALTER TABLE group_configs ADD COLUMN IF NOT EXISTS ad_block_enabled BOOLEAN DEFAULT false;
+-- ALTER TABLE group_configs ADD COLUMN IF NOT EXISTS command_disable_enabled BOOLEAN DEFAULT false;
+-- ALTER TABLE group_configs ADD COLUMN IF NOT EXISTS crypto_enabled BOOLEAN DEFAULT false;
+-- ALTER TABLE group_configs ADD COLUMN IF NOT EXISTS members_enabled BOOLEAN DEFAULT false;
+-- ALTER TABLE group_configs ADD COLUMN IF NOT EXISTS scheduled_msg_enabled BOOLEAN DEFAULT false;
+-- ALTER TABLE group_configs ADD COLUMN IF NOT EXISTS points_enabled BOOLEAN DEFAULT false;
+-- ALTER TABLE group_configs ADD COLUMN IF NOT EXISTS activity_stats_enabled BOOLEAN DEFAULT false;
+-- ALTER TABLE group_configs ADD COLUMN IF NOT EXISTS entertainment_enabled BOOLEAN DEFAULT false;
+-- ALTER TABLE group_configs ADD COLUMN IF NOT EXISTS usdt_price_enabled BOOLEAN DEFAULT false;
+-- ALTER TABLE group_configs ADD COLUMN IF NOT EXISTS channel_link_enabled BOOLEAN DEFAULT false;
+-- ALTER TABLE group_configs ADD COLUMN IF NOT EXISTS admin_perms_enabled BOOLEAN DEFAULT false;
+-- ALTER TABLE group_configs ADD COLUMN IF NOT EXISTS nsfw_detection_enabled BOOLEAN DEFAULT false;
+-- ALTER TABLE group_configs ADD COLUMN IF NOT EXISTS language_whitelist_enabled BOOLEAN DEFAULT false;
+-- ALTER TABLE group_configs ADD COLUMN IF NOT EXISTS invite_links_enabled BOOLEAN DEFAULT false;
+-- ALTER TABLE group_configs ADD COLUMN IF NOT EXISTS lottery_enabled BOOLEAN DEFAULT false;
+-- ALTER TABLE group_configs ADD COLUMN IF NOT EXISTS verified_users_enabled BOOLEAN DEFAULT false;

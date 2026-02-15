@@ -4,6 +4,220 @@ import { createClient } from '@supabase/supabase-js';
 
 const RATE_KEYWORDS = ['汇率', 'usdt', 'USDT', '价格', '行情', '汇率查询', '实时汇率'];
 
+// ==================== 菜单功能配置 ====================
+
+interface MenuFeature {
+  id: string;
+  name: string;
+  icon: string;
+  level: 'basic' | 'intermediate' | 'advanced';
+  description: string;
+}
+
+// 24个功能配置
+const MENU_FEATURES: MenuFeature[] = [
+  // 初级功能 (10个)
+  { id: 'verification', name: '进群验证', icon: '😊', level: 'basic', description: '新成员入群验证' },
+  { id: 'welcome', name: '欢迎消息', icon: '👋', level: 'basic', description: '自动发送欢迎消息' },
+  { id: 'autoreply', name: '自动回复', icon: 'ℹ️', level: 'basic', description: '关键词触发自动回复' },
+  { id: 'autodelete', name: '自动删除', icon: '🗑️', level: 'basic', description: '按规则自动删除消息' },
+  { id: 'autoban', name: '自动封禁', icon: '🚫', level: 'basic', description: '违规自动封禁用户' },
+  { id: 'autowarn', name: '自动警告', icon: '⚠️', level: 'basic', description: '违规自动警告用户' },
+  { id: 'automute', name: '自动禁言', icon: '😶', level: 'basic', description: '自动禁言违规用户' },
+  { id: 'flood', name: '刷屏处理', icon: '👆', level: 'basic', description: '检测并处理刷屏行为' },
+  { id: 'adblock', name: '广告封杀', icon: '🏛️', level: 'basic', description: '检测并处理广告消息' },
+  { id: 'cmdoff', name: '命令关闭', icon: '🚧', level: 'basic', description: '关闭/开启特定命令' },
+  
+  // 中级功能 (8个)
+  { id: 'crypto', name: '加密货币', icon: '💎', level: 'intermediate', description: 'USDT地址检测、汇率查询' },
+  { id: 'members', name: '群组成员', icon: '👥', level: 'intermediate', description: '成员信息管理' },
+  { id: 'schedule', name: '定时消息', icon: '⏰', level: 'intermediate', description: '定时发送群消息' },
+  { id: 'points', name: '积分相关', icon: 'Ⓜ️', level: 'intermediate', description: '签到、积分系统' },
+  { id: 'activity', name: '活跃度统计', icon: '📊', level: 'intermediate', description: '群聊活跃度统计' },
+  { id: 'entertainment', name: '娱乐功能', icon: '🎮', level: 'intermediate', description: '小游戏、娱乐命令' },
+  { id: 'usdtprice', name: '实时查U价', icon: '💵', level: 'intermediate', description: '实时USDT价格查询' },
+  { id: 'channel', name: '关联频道', icon: '📺', level: 'intermediate', description: '关联频道自动转发' },
+  
+  // 高级功能 (6个)
+  { id: 'admin', name: '管理权限', icon: '👮', level: 'advanced', description: '设置管理员权限级别' },
+  { id: 'nsfw', name: '色情检测', icon: '🔞', level: 'advanced', description: 'AI检测不良内容' },
+  { id: 'lang', name: '语言白名单', icon: '📝', level: 'advanced', description: '限制允许的语言' },
+  { id: 'invite', name: '邀请链接', icon: '🔗', level: 'advanced', description: '管理邀请链接' },
+  { id: 'lottery', name: '抽奖', icon: '🎁', level: 'advanced', description: '创建抽奖活动' },
+  { id: 'verifyuser', name: '认证用户', icon: '✅', level: 'advanced', description: '认证用户特权' },
+];
+
+// 功能ID到数据库字段的映射
+const featureToDbField: Record<string, string> = {
+  'verification': 'verification_enabled',
+  'welcome': 'welcome_enabled',
+  'autoreply': 'auto_reply_enabled',
+  'autodelete': 'auto_delete_enabled',
+  'autoban': 'auto_ban_enabled',
+  'autowarn': 'auto_warn_enabled',
+  'automute': 'auto_mute_enabled',
+  'flood': 'flood_control_enabled',
+  'adblock': 'ad_block_enabled',
+  'cmdoff': 'command_disable_enabled',
+  'crypto': 'crypto_enabled',
+  'members': 'members_enabled',
+  'schedule': 'scheduled_msg_enabled',
+  'points': 'points_enabled',
+  'activity': 'activity_stats_enabled',
+  'entertainment': 'entertainment_enabled',
+  'usdtprice': 'usdt_price_enabled',
+  'channel': 'channel_link_enabled',
+  'admin': 'admin_perms_enabled',
+  'nsfw': 'nsfw_detection_enabled',
+  'lang': 'language_whitelist_enabled',
+  'invite': 'invite_links_enabled',
+  'lottery': 'lottery_enabled',
+  'verifyuser': 'verified_users_enabled'
+};
+
+// 缓存功能状态 (内存缓存，减少数据库查询)
+const featureStatusCache: Map<string, Record<string, boolean>> = new Map();
+const CACHE_TTL = 60000; // 1分钟缓存
+const cacheTimestamps: Map<string, number> = new Map();
+
+/**
+ * 从数据库读取功能状态
+ */
+async function getFeatureStatus(chatId: number): Promise<Record<string, boolean>> {
+  const cacheKey = chatId.toString();
+  const now = Date.now();
+  
+  // 检查缓存
+  if (featureStatusCache.has(cacheKey) && cacheTimestamps.has(cacheKey)) {
+    const timestamp = cacheTimestamps.get(cacheKey)!;
+    if (now - timestamp < CACHE_TTL) {
+      return featureStatusCache.get(cacheKey)!;
+    }
+  }
+  
+  const supabase = getSupabase();
+  
+  // 先通过 chat_id 查询 groups 表获取 group_id
+  const { data: group, error: groupError } = await supabase
+    .from('groups')
+    .select('id')
+    .eq('chat_id', chatId)
+    .single();
+  
+  if (groupError || !group) {
+    console.error('Error getting group:', groupError);
+    // 如果数据库中没有记录，返回所有功能为 false
+    const defaultStatus: Record<string, boolean> = {};
+    MENU_FEATURES.forEach(f => {
+      defaultStatus[f.id] = false;
+    });
+    return defaultStatus;
+  }
+  
+  // 然后通过 group_id 查询 group_configs 表
+  const { data: config, error: configError } = await supabase
+    .from('group_configs')
+    .select('*')
+    .eq('group_id', group.id)
+    .single();
+  
+  if (configError || !config) {
+    console.error('Error getting group config:', configError);
+    // 如果数据库中没有记录，返回所有功能为 false
+    const defaultStatus: Record<string, boolean> = {};
+    MENU_FEATURES.forEach(f => {
+      defaultStatus[f.id] = false;
+    });
+    return defaultStatus;
+  }
+  
+  // 将数据库字段映射到功能ID
+  const status: Record<string, boolean> = {};
+  MENU_FEATURES.forEach(feature => {
+    const dbField = featureToDbField[feature.id];
+    status[feature.id] = dbField ? (config[dbField] ?? false) : false;
+  });
+  
+  // 更新缓存
+  featureStatusCache.set(cacheKey, status);
+  cacheTimestamps.set(cacheKey, now);
+  
+  return status;
+}
+
+/**
+ * 更新数据库中的功能状态
+ */
+async function updateFeatureStatus(chatId: number, featureId: string, enabled: boolean): Promise<boolean> {
+  const dbField = featureToDbField[featureId];
+  if (!dbField) {
+    console.error('Unknown feature:', featureId);
+    return false;
+  }
+  
+  const supabase = getSupabase();
+  
+  // 先通过 chat_id 查询 groups 表获取 group_id
+  const { data: group, error: groupError } = await supabase
+    .from('groups')
+    .select('id')
+    .eq('chat_id', chatId)
+    .single();
+  
+  if (groupError || !group) {
+    console.error('Error getting group:', groupError);
+    return false;
+  }
+  
+  // 检查 group_configs 记录是否存在
+  const { data: existingConfig } = await supabase
+    .from('group_configs')
+    .select('id')
+    .eq('group_id', group.id)
+    .single();
+  
+  let result;
+  
+  if (!existingConfig) {
+    // 记录不存在，先创建记录
+    const insertData: Record<string, any> = {
+      group_id: group.id,
+      [dbField]: enabled
+    };
+    
+    result = await supabase
+      .from('group_configs')
+      .insert(insertData);
+  } else {
+    // 记录存在，更新字段
+    result = await supabase
+      .from('group_configs')
+      .update({ [dbField]: enabled })
+      .eq('group_id', group.id);
+  }
+  
+  if (result.error) {
+    console.error('Error updating feature status:', result.error);
+    return false;
+  }
+  
+  // 清除缓存
+  const cacheKey = chatId.toString();
+  featureStatusCache.delete(cacheKey);
+  cacheTimestamps.delete(cacheKey);
+  
+  return true;
+}
+
+/**
+ * 清除功能状态缓存
+ */
+function clearFeatureStatusCache(chatId: number): void {
+  const cacheKey = chatId.toString();
+  featureStatusCache.delete(cacheKey);
+  cacheTimestamps.delete(cacheKey);
+}
+
 const ADDRESS_PATTERNS = {
   ERC20: /^0x[a-fA-F0-9]{40}$/,
   TRC20: /^T[A-Za-z1-9]{33}$/,
@@ -36,6 +250,560 @@ function getBotToken() {
   return token;
 }
 
+// ==================== 菜单功能函数 ====================
+
+/**
+ * 检查用户是否为群组管理员
+ */
+async function isGroupAdmin(chatId: number, userId: number): Promise<boolean> {
+  try {
+    const result = await callTelegramApi('getChatMember', {
+      chat_id: chatId,
+      user_id: userId
+    });
+    const status = result.result?.status;
+    return ['creator', 'administrator'].includes(status);
+  } catch (error) {
+    console.error('Error checking admin status:', error);
+    return false;
+  }
+}
+
+/**
+ * 获取功能状态文本
+ */
+function getFeatureStatusText(featureId: string, featureStatus: Record<string, boolean>): string {
+  const isEnabled = featureStatus[featureId] ?? false;
+  return isEnabled ? '✅已开启' : '❌已关闭';
+}
+
+/**
+ * 生成设置菜单的 Inline Keyboard
+ */
+function generateSettingsKeyboard(): any[][] {
+  const keyboard: any[][] = [];
+  
+  // 按级别分组功能
+  const basicFeatures = MENU_FEATURES.filter(f => f.level === 'basic');
+  const intermediateFeatures = MENU_FEATURES.filter(f => f.level === 'intermediate');
+  const advancedFeatures = MENU_FEATURES.filter(f => f.level === 'advanced');
+  
+  // 初级功能 - 每行2个按钮
+  for (let i = 0; i < basicFeatures.length; i += 2) {
+    const row = [];
+    row.push({
+      text: `${basicFeatures[i].icon} ${basicFeatures[i].name}`,
+      callback_data: `menu:${basicFeatures[i].id}:toggle`
+    });
+    if (basicFeatures[i + 1]) {
+      row.push({
+        text: `${basicFeatures[i + 1].icon} ${basicFeatures[i + 1].name}`,
+        callback_data: `menu:${basicFeatures[i + 1].id}:toggle`
+      });
+    }
+    keyboard.push(row);
+  }
+  
+  // 分隔行
+  keyboard.push([{ text: '──────────────', callback_data: 'menu:separator:none' }]);
+  
+  // 中级功能 - 每行2个按钮
+  for (let i = 0; i < intermediateFeatures.length; i += 2) {
+    const row = [];
+    row.push({
+      text: `${intermediateFeatures[i].icon} ${intermediateFeatures[i].name}`,
+      callback_data: `menu:${intermediateFeatures[i].id}:config`
+    });
+    if (intermediateFeatures[i + 1]) {
+      row.push({
+        text: `${intermediateFeatures[i + 1].icon} ${intermediateFeatures[i + 1].name}`,
+        callback_data: `menu:${intermediateFeatures[i + 1].id}:config`
+      });
+    }
+    keyboard.push(row);
+  }
+  
+  // 分隔行
+  keyboard.push([{ text: '──────────────', callback_data: 'menu:separator:none' }]);
+  
+  // 高级功能 - 每行2个按钮
+  for (let i = 0; i < advancedFeatures.length; i += 2) {
+    const row = [];
+    row.push({
+      text: `${advancedFeatures[i].icon} ${advancedFeatures[i].name}`,
+      callback_data: `menu:${advancedFeatures[i].id}:config`
+    });
+    if (advancedFeatures[i + 1]) {
+      row.push({
+        text: `${advancedFeatures[i + 1].icon} ${advancedFeatures[i + 1].name}`,
+        callback_data: `menu:${advancedFeatures[i + 1].id}:config`
+      });
+    }
+    keyboard.push(row);
+  }
+  
+  // 返回按钮
+  keyboard.push([{ text: '🔙 返回', callback_data: 'menu:back:main' }]);
+  
+  return keyboard;
+}
+
+/**
+ * 发送设置菜单
+ */
+async function sendSettingsMenu(chatId: number, groupName: string = '当前群组'): Promise<void> {
+  // 从数据库获取功能状态
+  const featureStatus = await getFeatureStatus(chatId);
+  
+  // 生成状态概览文本
+  const basicFeatures = MENU_FEATURES.filter(f => f.level === 'basic');
+  const statusOverview = basicFeatures
+    .slice(0, 4) // 只显示前4个功能状态
+    .map(f => `${f.name} ${getFeatureStatusText(f.id, featureStatus)}`)
+    .join('\n');
+  
+  const text = `⚙️ 设置
+群组：${groupName}
+
+状态：
+${statusOverview}
+
+选择你想改变的设置，更多帮助请访问群组频道`;
+  
+  const keyboard = generateSettingsKeyboard();
+  
+  await callTelegramApi('sendMessage', {
+    chat_id: chatId,
+    text: text,
+    parse_mode: 'HTML',
+    reply_markup: {
+      inline_keyboard: keyboard
+    }
+  });
+}
+
+/**
+ * 处理菜单按钮回调
+ */
+async function handleMenuCallback(callbackQuery: any, data: string): Promise<void> {
+  const chatId = callbackQuery.message?.chat?.id;
+  const userId = callbackQuery.from?.id;
+  const messageId = callbackQuery.message?.message_id;
+  
+  // 解析 callback_data: menu:{feature}:{action}
+  const parts = data.split(':');
+  if (parts.length < 3) return;
+  
+  const featureId = parts[1];
+  const action = parts[2];
+  
+  // 检查管理员权限
+  const isAdmin = await isGroupAdmin(chatId, userId);
+  if (!isAdmin) {
+    await callTelegramApi('answerCallbackQuery', {
+      callback_query_id: callbackQuery.id,
+      text: '❌ 只有群组管理员可以使用此功能',
+      show_alert: true
+    });
+    return;
+  }
+  
+  // 获取功能信息
+  const feature = MENU_FEATURES.find(f => f.id === featureId);
+  if (!feature && featureId !== 'separator' && featureId !== 'back') {
+    await callTelegramApi('answerCallbackQuery', {
+      callback_query_id: callbackQuery.id,
+      text: '❌ 功能不存在',
+      show_alert: true
+    });
+    return;
+  }
+  
+  // 处理返回主菜单
+  if (featureId === 'back' && action === 'main') {
+    await callTelegramApi('answerCallbackQuery', {
+      callback_query_id: callbackQuery.id,
+      text: '🔙 返回主菜单'
+    });
+    
+    // 更新为主菜单
+    await updateSettingsMenu(chatId, messageId);
+    return;
+  }
+  
+  // 处理分隔符点击
+  if (featureId === 'separator') {
+    await callTelegramApi('answerCallbackQuery', {
+      callback_query_id: callbackQuery.id,
+      text: ''
+    });
+    return;
+  }
+  
+  // 获取功能级别
+  const featureLevel = feature?.level;
+  
+  switch (action) {
+    case 'toggle':
+      // 从数据库获取当前功能状态
+      const featureStatus = await getFeatureStatus(chatId);
+      const currentStatus = featureStatus[featureId] ?? false;
+      const newStatus = !currentStatus;
+      
+      // 更新数据库中的功能状态
+      const updateSuccess = await updateFeatureStatus(chatId, featureId, newStatus);
+      
+      if (!updateSuccess) {
+        await callTelegramApi('answerCallbackQuery', {
+          callback_query_id: callbackQuery.id,
+          text: '❌ 更新功能状态失败，请重试',
+          show_alert: true
+        });
+        return;
+      }
+      
+      await callTelegramApi('answerCallbackQuery', {
+        callback_query_id: callbackQuery.id,
+        text: `${feature?.icon} ${feature?.name} 已${newStatus ? '开启' : '关闭'}`,
+        show_alert: false
+      });
+      
+      // 更新菜单显示
+      await updateSettingsMenu(chatId, messageId);
+      break;
+      
+    case 'config':
+      // 中级和高级功能进入子菜单配置
+      if (featureLevel === 'intermediate' || featureLevel === 'advanced') {
+        await callTelegramApi('answerCallbackQuery', {
+          callback_query_id: callbackQuery.id,
+          text: `⚙️ 进入 ${feature?.name} 配置...`
+        });
+        
+        // 显示子菜单
+        await sendFeatureConfigMenu(chatId, messageId, featureId);
+      } else {
+        // 初级功能直接切换
+        const currentStatus = mockFeatureStatus[featureId] ?? false;
+        mockFeatureStatus[featureId] = !currentStatus;
+        
+        await callTelegramApi('answerCallbackQuery', {
+          callback_query_id: callbackQuery.id,
+          text: `${feature?.icon} ${feature?.name} 已${!currentStatus ? '开启' : '关闭'}`,
+          show_alert: false
+        });
+        
+        // 更新菜单显示
+        await updateSettingsMenu(chatId, messageId);
+      }
+      break;
+      
+    default:
+      // 处理子菜单的其他操作
+      if (featureLevel === 'intermediate' || featureLevel === 'advanced') {
+        await handleSubMenuCallback(callbackQuery, featureId, action);
+      } else {
+        await callTelegramApi('answerCallbackQuery', {
+          callback_query_id: callbackQuery.id,
+          text: '已收到'
+        });
+      }
+  }
+}
+
+/**
+ * 更新设置菜单
+ */
+async function updateSettingsMenu(chatId: number, messageId: number): Promise<void> {
+  // 从数据库获取功能状态
+  const featureStatus = await getFeatureStatus(chatId);
+  
+  const basicFeatures = MENU_FEATURES.filter(f => f.level === 'basic');
+  const statusOverview = basicFeatures
+    .slice(0, 4)
+    .map(f => `${f.name} ${getFeatureStatusText(f.id, featureStatus)}`)
+    .join('\n');
+  
+  const text = `⚙️ 设置
+群组：当前群组
+
+状态：
+${statusOverview}
+
+选择你想改变的设置，更多帮助请访问群组频道`;
+  
+  const keyboard = generateSettingsKeyboard();
+  
+  await callTelegramApi('editMessageText', {
+    chat_id: chatId,
+    message_id: messageId,
+    text: text,
+    parse_mode: 'HTML',
+    reply_markup: {
+      inline_keyboard: keyboard
+    }
+  });
+}
+
+// ==================== 子菜单配置界面 ====================
+
+/**
+ * 子菜单配置项接口
+ */
+interface SubMenuConfig {
+  action: string;
+  label: string;
+  icon?: string;
+}
+
+/**
+ * 功能子菜单配置映射
+ */
+const FEATURE_SUBMENU_CONFIG: Record<string, SubMenuConfig[]> = {
+  // 中级功能配置项
+  crypto: [
+    { action: 'view_addresses', label: '查看检测地址', icon: '📋' },
+    { action: 'add_address', label: '添加检测地址', icon: '➕' },
+    { action: 'remove_address', label: '移除检测地址', icon: '➖' },
+  ],
+  members: [
+    { action: 'view_list', label: '查看成员列表', icon: '📋' },
+    { action: 'search_member', label: '搜索成员', icon: '🔍' },
+    { action: 'export_data', label: '导出数据', icon: '📤' },
+  ],
+  schedule: [
+    { action: 'view_scheduled', label: '查看定时任务', icon: '📋' },
+    { action: 'add_schedule', label: '添加定时消息', icon: '➕' },
+    { action: 'delete_schedule', label: '删除定时任务', icon: '➖' },
+  ],
+  points: [
+    { action: 'view_settings', label: '积分设置', icon: '⚙️' },
+    { action: 'view_rewards', label: '奖励配置', icon: '🎁' },
+    { action: 'reset_points', label: '重置积分', icon: '🔄' },
+  ],
+  activity: [
+    { action: 'view_stats', label: '查看统计', icon: '📊' },
+    { action: 'export_stats', label: '导出统计', icon: '📤' },
+    { action: 'settings', label: '统计设置', icon: '⚙️' },
+  ],
+  entertainment: [
+    { action: 'view_games', label: '游戏列表', icon: '🎮' },
+    { action: 'enable_game', label: '启用游戏', icon: '✅' },
+    { action: 'disable_game', label: '禁用游戏', icon: '❌' },
+  ],
+  usdtprice: [
+    { action: 'view_sources', label: '数据源配置', icon: '🔌' },
+    { action: 'set_alert', label: '价格预警', icon: '🔔' },
+    { action: 'auto_update', label: '自动更新', icon: '🔄' },
+  ],
+  channel: [
+    { action: 'view_linked', label: '查看关联频道', icon: '📋' },
+    { action: 'link_channel', label: '关联新频道', icon: '🔗' },
+    { action: 'unlink_channel', label: '取消关联', icon: '❌' },
+  ],
+  // 高级功能配置项
+  admin: [
+    { action: 'view_admins', label: '查看管理员', icon: '👥' },
+    { action: 'add_admin', label: '添加管理员', icon: '➕' },
+    { action: 'remove_admin', label: '移除管理员', icon: '➖' },
+    { action: 'set_permissions', label: '权限设置', icon: '🔐' },
+  ],
+  nsfw: [
+    { action: 'view_settings', label: '检测设置', icon: '⚙️' },
+    { action: 'set_sensitivity', label: '敏感度调节', icon: '🎚️' },
+    { action: 'view_logs', label: '检测日志', icon: '📋' },
+  ],
+  lang: [
+    { action: 'view_whitelist', label: '白名单列表', icon: '📋' },
+    { action: 'add_language', label: '添加语言', icon: '➕' },
+    { action: 'remove_language', label: '移除语言', icon: '➖' },
+  ],
+  invite: [
+    { action: 'view_links', label: '查看链接', icon: '🔗' },
+    { action: 'create_link', label: '创建链接', icon: '➕' },
+    { action: 'revoke_link', label: '撤销链接', icon: '❌' },
+    { action: 'link_stats', label: '链接统计', icon: '📊' },
+  ],
+  lottery: [
+    { action: 'view_lotteries', label: '抽奖列表', icon: '📋' },
+    { action: 'create_lottery', label: '创建抽奖', icon: '➕' },
+    { action: 'end_lottery', label: '结束抽奖', icon: '🏁' },
+  ],
+  verifyuser: [
+    { action: 'view_verified', label: '认证用户', icon: '👤' },
+    { action: 'add_verified', label: '添加认证', icon: '➕' },
+    { action: 'remove_verified', label: '取消认证', icon: '➖' },
+    { action: 'set_privileges', label: '特权设置', icon: '👑' },
+  ],
+};
+
+/**
+ * 生成子菜单的 Inline Keyboard
+ */
+function generateSubMenuKeyboard(featureId: string): any[][] {
+  const keyboard: any[][] = [];
+  const feature = MENU_FEATURES.find(f => f.id === featureId);
+  const configItems = FEATURE_SUBMENU_CONFIG[featureId] || [];
+  
+  // 添加配置项按钮 - 每行2个
+  for (let i = 0; i < configItems.length; i += 2) {
+    const row = [];
+    const item1 = configItems[i];
+    row.push({
+      text: `${item1.icon || '•'} ${item1.label}`,
+      callback_data: `menu:${featureId}:${item1.action}`
+    });
+    
+    if (configItems[i + 1]) {
+      const item2 = configItems[i + 1];
+      row.push({
+        text: `${item2.icon || '•'} ${item2.label}`,
+        callback_data: `menu:${featureId}:${item2.action}`
+      });
+    }
+    keyboard.push(row);
+  }
+  
+  // 分隔行
+  if (configItems.length > 0) {
+    keyboard.push([{ text: '──────────────', callback_data: 'menu:separator:none' }]);
+  }
+  
+  // 切换开关和返回按钮
+  const isEnabled = mockFeatureStatus[featureId] ?? false;
+  keyboard.push([
+    { 
+      text: isEnabled ? '🔴 关闭功能' : '🟢 开启功能', 
+      callback_data: `menu:${featureId}:toggle` 
+    },
+    { 
+      text: '🔙 返回', 
+      callback_data: 'menu:back:main' 
+    }
+  ]);
+  
+  return keyboard;
+}
+
+/**
+ * 发送功能配置子菜单
+ */
+async function sendFeatureConfigMenu(
+  chatId: number, 
+  messageId: number | null, 
+  featureId: string
+): Promise<void> {
+  const feature = MENU_FEATURES.find(f => f.id === featureId);
+  if (!feature) {
+    throw new Error(`Feature not found: ${featureId}`);
+  }
+  
+  const isEnabled = mockFeatureStatus[featureId] ?? false;
+  const statusText = isEnabled ? '✅ 已开启' : '❌ 已关闭';
+  const levelText = feature.level === 'intermediate' ? '中级功能' : '高级功能';
+  
+  const text = `${feature.icon} ${feature.name} 配置
+
+${levelText} | 当前状态: ${statusText}
+
+📋 ${feature.description}
+
+🚧 此功能正在开发中，敬请期待完整版！`;
+  
+  const keyboard = generateSubMenuKeyboard(featureId);
+  
+  if (messageId) {
+    // 更新现有消息
+    await callTelegramApi('editMessageText', {
+      chat_id: chatId,
+      message_id: messageId,
+      text: text,
+      parse_mode: 'HTML',
+      reply_markup: {
+        inline_keyboard: keyboard
+      }
+    });
+  } else {
+    // 发送新消息
+    await callTelegramApi('sendMessage', {
+      chat_id: chatId,
+      text: text,
+      parse_mode: 'HTML',
+      reply_markup: {
+        inline_keyboard: keyboard
+      }
+    });
+  }
+}
+
+/**
+ * 处理子菜单按钮回调
+ */
+async function handleSubMenuCallback(
+  callbackQuery: any, 
+  featureId: string, 
+  action: string
+): Promise<void> {
+  const chatId = callbackQuery.message?.chat?.id;
+  const messageId = callbackQuery.message?.message_id;
+  const feature = MENU_FEATURES.find(f => f.id === featureId);
+  
+  if (!feature) {
+    await callTelegramApi('answerCallbackQuery', {
+      callback_query_id: callbackQuery.id,
+      text: '❌ 功能不存在',
+      show_alert: true
+    });
+    return;
+  }
+  
+  // 处理切换开关
+  if (action === 'toggle') {
+    const currentStatus = mockFeatureStatus[featureId] ?? false;
+    mockFeatureStatus[featureId] = !currentStatus;
+    
+    await callTelegramApi('answerCallbackQuery', {
+      callback_query_id: callbackQuery.id,
+      text: `${feature.icon} ${feature.name} 已${!currentStatus ? '开启' : '关闭'}`,
+      show_alert: false
+    });
+    
+    // 更新子菜单显示
+    await sendFeatureConfigMenu(chatId, messageId, featureId);
+    return;
+  }
+  
+  // 处理返回主菜单
+  if (action === 'back') {
+    await callTelegramApi('answerCallbackQuery', {
+      callback_query_id: callbackQuery.id,
+      text: '🔙 返回主菜单'
+    });
+    
+    // 更新为主菜单
+    await updateSettingsMenu(chatId, messageId);
+    return;
+  }
+  
+  // 处理配置项操作（开发中提示）
+  const configItems = FEATURE_SUBMENU_CONFIG[featureId] || [];
+  const configItem = configItems.find(item => item.action === action);
+  
+  if (configItem) {
+    await callTelegramApi('answerCallbackQuery', {
+      callback_query_id: callbackQuery.id,
+      text: `🚧 "${configItem.label}" 功能开发中...`,
+      show_alert: true
+    });
+  } else {
+    await callTelegramApi('answerCallbackQuery', {
+      callback_query_id: callbackQuery.id,
+      text: '🚧 此功能正在开发中',
+      show_alert: true
+    });
+  }
+}
+
 async function callTelegramApi(method: string, params: Record<string, any>): Promise<any> {
   const token = getBotToken();
   const url = `https://api.telegram.org/bot${token}/${method}`;
@@ -45,6 +813,26 @@ async function callTelegramApi(method: string, params: Record<string, any>): Pro
     body: JSON.stringify(params)
   });
   return response.json();
+}
+
+async function checkAdminPermission(chatId: number, userId: number): Promise<boolean> {
+  try {
+    const result = await callTelegramApi('getChatMember', {
+      chat_id: chatId,
+      user_id: userId
+    });
+
+    if (!result.ok) {
+      console.error('Failed to get chat member info:', result);
+      return false;
+    }
+
+    const status = result.result?.status;
+    return status === 'creator' || status === 'administrator';
+  } catch (error) {
+    console.error('Error checking admin permission:', error);
+    return false;
+  }
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -294,6 +1082,20 @@ async function handleCallbackQuery(update: TelegramUpdate) {
 
   console.log('Callback query:', { data, userId, chatId });
 
+  // Handle menu button clicks
+  if (data?.startsWith('menu:')) {
+    if (!chatId) {
+      await callTelegramApi('answerCallbackQuery', {
+        callback_query_id: callbackQuery.id,
+        text: '❌ 无法获取群组信息'
+      });
+      return;
+    }
+
+    await handleMenuCallback(callbackQuery, data);
+    return;
+  }
+
   // Handle verification callback
   if (data?.startsWith('verify_channel:')) {
     const recordId = data.split(':')[1];
@@ -439,9 +1241,56 @@ async function handleCommand(chatId: number, userId: number | undefined, usernam
       });
       break;
 
+    case '/settings':
+      await handleSettingsCommand(chatId, userId, message);
+      break;
+
     default:
       console.log('Unknown command:', command);
   }
+}
+
+/**
+ * 处理 /settings 命令
+ */
+async function handleSettingsCommand(chatId: number, userId: number | undefined, message: any): Promise<void> {
+  console.log('=== handleSettingsCommand ===');
+  
+  // 检查是否在群组中
+  const chatType = message.chat?.type;
+  if (chatType !== 'group' && chatType !== 'supergroup') {
+    await callTelegramApi('sendMessage', {
+      chat_id: chatId,
+      text: '⚠️ 设置菜单只能在群组中使用。\n\n请将机器人添加到群组并发送 /settings'
+    });
+    return;
+  }
+
+  // 检查用户是否为管理员
+  if (!userId) {
+    await callTelegramApi('sendMessage', {
+      chat_id: chatId,
+      text: '❌ 无法获取用户信息'
+    });
+    return;
+  }
+
+  const isAdmin = await isGroupAdmin(chatId, userId);
+  if (!isAdmin) {
+    await callTelegramApi('sendMessage', {
+      chat_id: chatId,
+      text: '⚠️ 只有群组管理员可以使用设置菜单'
+    });
+    return;
+  }
+
+  // 获取群组名称
+  const groupName = message.chat?.title || '当前群组';
+  
+  // 发送设置菜单
+  await sendSettingsMenu(chatId, groupName);
+  
+  console.log('=== handleSettingsCommand END ===');
 }
 
 async function handleGroupMessage(message: any) {
