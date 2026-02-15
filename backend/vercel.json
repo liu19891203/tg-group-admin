@@ -1,33 +1,16 @@
 {
   "version": 2,
   "framework": null,
-  "buildCommand": "npm run build",
-  "outputDirectory": "dist",
   "installCommand": "npm install",
   "regions": ["iad1"],
   "functions": {
     "api/**/*.ts": {
       "maxDuration": 30
+    },
+    "api/**/*.js": {
+      "maxDuration": 30
     }
   },
-  "rewrites": [
-    {
-      "source": "/api/telegram/webhook",
-      "destination": "/api/telegram/webhook"
-    },
-    {
-      "source": "/api/cron/scheduled-messages",
-      "destination": "/api/cron/scheduled-messages"
-    },
-    {
-      "source": "/api/cron/daily-stats",
-      "destination": "/api/cron/daily-stats"
-    },
-    {
-      "source": "/api/(.*)",
-      "destination": "/api/index"
-    }
-  ],
   "headers": [
     {
       "source": "/api/(.*)",
