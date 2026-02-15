@@ -1077,6 +1077,269 @@ const handlers: Record<string, Handler> = {
     
     const result = await response.json() as TelegramApiResponse;
     res.json({ success: result.ok, data: result });
+  },
+
+  // ============================================
+  // Telegram Verification Code Login APIs
+  // ============================================
+
+  /**
+   * POST /admin/auth/send-code
+   * 发送登录验证码到用户的 Telegram
+   */
+  'POST /admin/auth/send-code': async (req, res) => {
+    const { telegramId } = req.body;
+    
+    if (!telegramId) {
+      res.status(400).json({ success: false, error: '请提供 Telegram ID' });
+      return;
+    }
+
+    // 解析 telegramId（支持 @username 或数字 ID）
+    let targetChatId: number;
+    if (typeof telegramId === 'string' && telegramId.startsWith('@')) {
+      // 通过 username 获取 chat_id
+      const username = telegramId.substring(1);
+      const userResult = await callTelegramApi('getChat', {
+        chat_id: `@${username}`
+      });
+      
+      if (!userResult.ok) {
+        res.status(400).json({ success: false, error: '找不到该 Telegram 用户，请确保用户已与机器人对话' });
+        return;
+      }
+      targetChatId = userResult.result.id;
+    } else {
+      targetChatId = parseInt(telegramId);
+      if (isNaN(targetChatId)) {
+        res.status(400).json({ success: false, error: '无效的 Telegram ID' });
+        return;
+      }
+    }
+
+    // 生成 6 位验证码
+    const code = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5分钟后过期
+
+    // 保存验证码到数据库
+    const { error: insertError } = await supabase
+      .from('login_codes')
+      .insert({
+        telegram_id: targetChatId,
+        code: code,
+        expires_at: expiresAt.toISOString(),
+        ip_address: req.headers['x-forwarded-for'] || req.socket.remoteAddress,
+        user_agent: req.headers['user-agent']
+      });
+
+    if (insertError) {
+      console.error('Error saving login code:', insertError);
+      res.status(500).json({ success: false, error: '生成验证码失败' });
+      return;
+    }
+
+    // 发送验证码到用户的 Telegram
+    const messageResult = await callTelegramApi('sendMessage', {
+      chat_id: targetChatId,
+      text: `🔐 登录验证码\n\n您的验证码是：<code>${code}</code>\n\n⏰ 有效期：5分钟\n🤖 请勿将验证码分享给他人`,
+      parse_mode: 'HTML'
+    });
+
+    if (!messageResult.ok) {
+      console.error('Error sending login code:', messageResult);
+      res.status(500).json({ success: false, error: '发送验证码失败，请确保用户已与机器人开始对话' });
+      return;
+    }
+
+    res.json({ 
+      success: true, 
+      message: '验证码已发送到您的 Telegram',
+      expiresIn: 300 // 5分钟 = 300秒
+    });
+  },
+
+  /**
+   * POST /admin/auth/verify-code
+   * 验证验证码并登录
+   */
+  'POST /admin/auth/verify-code': async (req, res) => {
+    const { telegramId, code } = req.body;
+    
+    if (!telegramId || !code) {
+      res.status(400).json({ success: false, error: '请提供 Telegram ID 和验证码' });
+      return;
+    }
+
+    // 解析 telegramId
+    let targetTelegramId: number;
+    if (typeof telegramId === 'string' && telegramId.startsWith('@')) {
+      const username = telegramId.substring(1);
+      const userResult = await callTelegramApi('getChat', {
+        chat_id: `@${username}`
+      });
+      
+      if (!userResult.ok) {
+        res.status(400).json({ success: false, error: '找不到该 Telegram 用户' });
+        return;
+      }
+      targetTelegramId = userResult.result.id;
+    } else {
+      targetTelegramId = parseInt(telegramId);
+    }
+
+    // 查找有效的验证码
+    const { data: codeRecord, error: codeError } = await supabase
+      .from('login_codes')
+      .select('*')
+      .eq('telegram_id', targetTelegramId)
+      .eq('code', code)
+      .eq('used', false)
+      .gt('expires_at', new Date().toISOString())
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .single();
+
+    if (codeError || !codeRecord) {
+      res.status(400).json({ success: false, error: '验证码无效或已过期' });
+      return;
+    }
+
+    // 检查尝试次数
+    if (codeRecord.attempts >= codeRecord.max_attempts) {
+      res.status(400).json({ success: false, error: '尝试次数过多，请重新获取验证码' });
+      return;
+    }
+
+    // 验证码不匹配，增加尝试次数
+    if (codeRecord.code !== code) {
+      await supabase
+        .from('login_codes')
+        .update({ attempts: codeRecord.attempts + 1 })
+        .eq('id', codeRecord.id);
+      
+      res.status(400).json({ 
+        success: false, 
+        error: '验证码错误',
+        remainingAttempts: codeRecord.max_attempts - codeRecord.attempts - 1
+      });
+      return;
+    }
+
+    // 标记验证码为已使用
+    await supabase
+      .from('login_codes')
+      .update({ used: true })
+      .eq('id', codeRecord.id);
+
+    // 获取或创建用户
+    const { data: existingAdmin } = await supabase
+      .from('admins')
+      .select('*')
+      .eq('telegram_id', targetTelegramId)
+      .single();
+
+    let admin;
+    if (existingAdmin) {
+      admin = existingAdmin;
+      // 更新最后登录时间
+      await supabase
+        .from('admins')
+        .update({ last_login_at: new Date().toISOString() })
+        .eq('id', admin.id);
+    } else {
+      // 获取 Telegram 用户信息
+      const userResult = await callTelegramApi('getChat', {
+        chat_id: targetTelegramId
+      });
+      
+      const username = userResult.ok ? userResult.result.username : null;
+      const displayName = userResult.ok 
+        ? (userResult.result.first_name + (userResult.result.last_name ? ' ' + userResult.result.last_name : ''))
+        : 'Unknown';
+
+      // 创建新用户（默认等级 0 = 普通用户）
+      const { data: newAdmin, error: createError } = await supabase
+        .from('admins')
+        .insert({
+          telegram_id: targetTelegramId,
+          username: username || `user_${targetTelegramId}`,
+          display_name: displayName,
+          level: 0, // 默认普通用户
+          is_active: true
+        })
+        .select()
+        .single();
+
+      if (createError) {
+        console.error('Error creating admin:', createError);
+        res.status(500).json({ success: false, error: '创建用户失败' });
+        return;
+      }
+
+      admin = newAdmin;
+    }
+
+    // 生成 JWT token
+    const jwt = require('jsonwebtoken');
+    const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
+    
+    const token = jwt.sign(
+      {
+        id: admin.id,
+        telegram_id: admin.telegram_id,
+        username: admin.username,
+        level: admin.level,
+        permissions: admin.permissions
+      },
+      JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+
+    res.json({
+      success: true,
+      token,
+      user: {
+        id: admin.id,
+        telegram_id: admin.telegram_id,
+        username: admin.username,
+        display_name: admin.display_name,
+        level: admin.level,
+        permissions: admin.permissions
+      }
+    });
+  },
+
+  /**
+   * GET /admin/auth/me
+   * 获取当前登录用户信息
+   */
+  'GET /admin/auth/me': async (req, res) => {
+    const authHeader = req.headers.authorization;
+    
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      res.status(401).json({ success: false, error: '未提供认证令牌' });
+      return;
+    }
+
+    const token = authHeader.substring(7);
+    const jwt = require('jsonwebtoken');
+    const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
+
+    try {
+      const decoded = jwt.verify(token, JWT_SECRET);
+      res.json({
+        success: true,
+        data: {
+          id: decoded.id,
+          telegram_id: decoded.telegram_id,
+          username: decoded.username,
+          level: decoded.level,
+          permissions: decoded.permissions
+        }
+      });
+    } catch (error) {
+      res.status(401).json({ success: false, error: '无效的认证令牌' });
+    }
   }
 };
 
