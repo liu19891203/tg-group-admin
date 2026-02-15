@@ -61,12 +61,20 @@ const handlers: Record<string, Handler> = {
   },
 
   'GET /admin/groups/:id': async (req, res, params) => {
-    const { data, error } = await supabase.from('groups').select('*').eq('id', params.id).single();
+    const { data, error } = await supabase
+      .from('groups')
+      .select('*, group_configs(*)')
+      .eq('id', params.id)
+      .single();
     if (error) {
       res.status(404).json({ error: 'Not found' });
       return;
     }
-    res.json({ success: true, data });
+    const result = {
+      ...data,
+      group_configs: data?.group_configs?.[0] || null
+    };
+    res.json({ success: true, data: result });
   },
 
   'PUT /admin/groups/:id': async (req, res, params) => {
@@ -87,18 +95,31 @@ const handlers: Record<string, Handler> = {
     res.json({ success: true });
   },
 
+  'PUT /admin/groups/:id/config': async (req, res, params) => {
+    const { data, error } = await supabase
+      .from('group_configs')
+      .upsert({ group_id: params.id, ...req.body })
+      .select();
+    if (error) {
+      res.status(500).json({ error: error.message });
+      return;
+    }
+    res.json({ success: true, data: data[0] });
+  },
+
   'GET /admin/dashboard': async (req, res) => {
     const [groups, users] = await Promise.all([
       supabase.from('groups').select('id', { count: 'exact' }).eq('is_active', true),
       supabase.from('users').select('id', { count: 'exact' })
     ]);
     res.json({
-      success: true,
-      data: {
-        totalGroups: groups.count || 0,
-        totalUsers: users.count || 0,
-        totalMessages: 0
-      }
+      total_groups: groups.count || 0,
+      total_users: users.count || 0,
+      messages_today: 0,
+      messages_this_month: 0,
+      active_users_today: 0,
+      top_groups: [],
+      recent_activity: []
     });
   },
 
@@ -611,14 +632,12 @@ const handlers: Record<string, Handler> = {
     
     res.json({
       success: true,
-      data: {
-        token,
-        user: {
-          id: admin.id,
-          username: admin.username,
-          display_name: admin.display_name,
-          level: admin.level
-        }
+      token: token,
+      user: {
+        id: admin.id,
+        username: admin.username,
+        display_name: admin.display_name,
+        level: admin.level
       }
     });
   },
