@@ -176,6 +176,39 @@ export interface VerifiedInfo {
 export interface GroupConfig {
   id: string;
   group_id: string;
+  
+  // 功能开关字段（与 Telegram 菜单同步）
+  // 初级功能
+  verification_enabled?: boolean;
+  welcome_enabled?: boolean;
+  auto_reply_enabled?: boolean;
+  auto_delete_enabled?: boolean;
+  auto_ban_enabled?: boolean;
+  auto_warn_enabled?: boolean;
+  auto_mute_enabled?: boolean;
+  flood_control_enabled?: boolean;
+  ad_block_enabled?: boolean;
+  command_disable_enabled?: boolean;
+  
+  // 中级功能
+  crypto_enabled?: boolean;
+  members_enabled?: boolean;
+  scheduled_msg_enabled?: boolean;
+  points_enabled?: boolean;
+  activity_stats_enabled?: boolean;
+  entertainment_enabled?: boolean;
+  usdt_price_enabled?: boolean;
+  channel_link_enabled?: boolean;
+  
+  // 高级功能
+  admin_perms_enabled?: boolean;
+  nsfw_detection_enabled?: boolean;
+  language_whitelist_enabled?: boolean;
+  invite_links_enabled?: boolean;
+  lottery_enabled?: boolean;
+  verified_users_enabled?: boolean;
+  
+  // 详细配置对象
   welcome_config: WelcomeConfig;
   verification_config: VerificationConfig;
   anti_ads_config: AntiAdsConfig;
