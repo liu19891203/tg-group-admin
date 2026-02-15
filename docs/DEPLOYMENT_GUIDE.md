@@ -45,7 +45,7 @@ JWT_SECRET=telegram_group_manager_jwt_secret_key_2024_production
 | `JWT_SECRET` | `telegram_group_manager_jwt_secret_key_2024_production` |
 
 5. 点击 **Deploy**
-6. 等待部署完成，记录后端域名（如：`https://tg-group-admin-backend.vercel.app`）
+6. 等待部署完成，记录后端域名（如：`tg-group-admin.vercel.app`）
 
 ### 第二步：部署前端
 

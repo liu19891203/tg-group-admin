@@ -100,7 +100,7 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { ChatLineRound, ArrowDown, Check, Search, Refresh, InfoFilled } from '@element-plus/icons-vue'
-import axios from 'axios'
+import api from '@/api'
 
 interface Group {
   id: string
@@ -158,14 +158,9 @@ const getGroupTypeLabel = (type: string) => {
 const loadGroups = async () => {
   loading.value = true
   try {
-    const response = await axios.get('/api/admin/groups')
-    if (response.data.success) {
-      groups.value = response.data.data || []
-      
-      // 如果是示例数据，显示提示
-      if (response.data.demo) {
-        ElMessage.info(response.data.message || '当前显示示例数据')
-      }
+    const response = await api.get<{ data: Group[]; total: number; page: number; limit: number }>('/admin/groups')
+    if (response.data) {
+      groups.value = response.data || []
       
       // 如果没有选中群组，默认选中第一个
       if (!currentGroupId.value && groups.value.length > 0) {
