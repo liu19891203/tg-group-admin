@@ -667,6 +667,29 @@ async function handleMenuCallback(callbackQuery: any, data: string): Promise<voi
   // 解析目标群组ID（如果有）- 格式: menu:feature:action:targetChatId
   const targetChatId = parts[3] ? parseInt(parts[3]) : undefined;
   
+  // 处理 /start 命令的回调
+  if (featureId === 'start') {
+    if (action === 'mygroups') {
+      await callTelegramApi('answerCallbackQuery', {
+        callback_query_id: callbackQuery.id,
+        text: '👤 打开我的群组...'
+      });
+      await sendUserGroupsMenu(chatId, userId);
+      return;
+    }
+    if (action === 'help') {
+      await callTelegramApi('answerCallbackQuery', {
+        callback_query_id: callbackQuery.id,
+        text: '❓ 显示帮助信息'
+      });
+      await callTelegramApi('sendMessage', {
+        chat_id: chatId,
+        text: `📖 帮助信息\n\n📌 可用命令：\n/start - 开始使用\n/help - 查看帮助\n/mygroups - 我的群组管理\n/checkin - 每日签到\n/me - 个人信息\n/rank - 排行榜\n/reload - 刷新信息`
+      });
+      return;
+    }
+  }
+  
   // 确定实际要操作的群组ID
   // 如果有 targetChatId，说明是在私聊中配置指定群组
   // 否则使用当前聊天ID（群组内直接使用）
@@ -1688,10 +1711,27 @@ async function handleCommand(chatId: number, userId: number | undefined, usernam
 
   switch (command) {
     case '/start':
-      await callTelegramApi('sendMessage', {
-        chat_id: chatId,
-        text: `👋 你好 ${username}！\n\n我是群管机器人。\n\n📌 可用命令：\n/start - 开始使用\n/help - 查看帮助\n/mygroups - 我的群组管理\n/checkin - 每日签到\n/me - 个人信息\n/rank - 排行榜`
-      });
+      // 检查是否为私聊
+      const chatType = message.chat?.type;
+      if (chatType === 'private') {
+        // 私聊中显示我的群组按钮
+        await callTelegramApi('sendMessage', {
+          chat_id: chatId,
+          text: `👋 你好 ${username}！\n\n我是群管机器人，可以帮助你管理群组。\n\n📌 快速开始：\n1. 将机器人添加到群组\n2. 在群组中发送 /settings 进行配置\n3. 或在下方点击「我的群组」管理已添加的群组`,
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: '👤 我的群组', callback_data: 'menu:start:mygroups' }],
+              [{ text: '❓ 帮助', callback_data: 'menu:start:help' }]
+            ]
+          }
+        });
+      } else {
+        // 群组中显示普通帮助
+        await callTelegramApi('sendMessage', {
+          chat_id: chatId,
+          text: `👋 你好 ${username}！\n\n我是群管机器人。\n\n📌 可用命令：\n/start - 开始使用\n/help - 查看帮助\n/mygroups - 我的群组管理\n/checkin - 每日签到\n/me - 个人信息\n/rank - 排行榜`
+        });
+      }
       break;
 
     case '/help':
