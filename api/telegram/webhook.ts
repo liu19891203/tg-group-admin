@@ -1,2 +1,5 @@
-import handler from '../../../backend/api/telegram/webhook';
-export default handler;
+import { VercelRequest, VercelResponse } from '@vercel/node';
+
+export default async function handler(req: VercelRequest, res: VercelResponse) {
+  res.json({ status: 'ok', message: 'Telegram webhook endpoint', timestamp: new Date().toISOString() });
+}
