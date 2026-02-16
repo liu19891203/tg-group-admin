@@ -1,1 +1,2 @@
-export { default } from '../../backend/api/index';
+import handler from '../../backend/api/index';
+export default handler;
