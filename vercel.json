@@ -5,9 +5,15 @@
   "installCommand": "npm install && cd backend && npm install",
   "functions": {
     "api/**/*.ts": {
-      "maxDuration": 30
+      "maxDuration": 10
     }
   },
+  "crons": [
+    {
+      "path": "/api/cron/scheduled-messages",
+      "schedule": "*/5 * * * *"
+    }
+  ],
   "rewrites": [
     {
       "source": "/assets/(.*)",
