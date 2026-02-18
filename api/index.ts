@@ -41,6 +41,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const urlObj = new URL(url, 'http://localhost');
   const path = urlObj.pathname.replace(/^\/api/, '') || '/';
 
+  console.log('Request:', { method: req.method, path, url });
+
   try {
     // Health check
     if (path === '/health') {
@@ -49,7 +51,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     // Set webhook
-    if (path === '/admin/set-webhook' && req.method === 'POST') {
+    if (path === '/admin/set-webhook') {
       const WEBHOOK_URL = process.env.WEBHOOK_URL || 'https://tg-group-admin.vercel.app/api/telegram/webhook';
       const result = await callTelegramApi('setWebhook', {
         url: WEBHOOK_URL,
@@ -61,22 +63,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     // Webhook info
-    if (path === '/admin/webhook-info' && req.method === 'GET') {
+    if (path === '/admin/webhook-info') {
       const result = await callTelegramApi('getWebhookInfo', {});
       res.json({ success: result.ok, data: result.result });
       return;
     }
 
     // Delete webhook
-    if (path === '/admin/delete-webhook' && req.method === 'POST') {
+    if (path === '/admin/delete-webhook') {
       const result = await callTelegramApi('deleteWebhook', { drop_pending_updates: true });
       res.json({ success: result.ok, data: result });
       return;
     }
 
     // Send login code
-    if (path === '/admin/auth/send-code' && req.method === 'POST') {
-      const { telegramId } = req.body;
+    if (path === '/admin/auth/send-code') {
+      const { telegramId } = req.body || {};
       if (!telegramId) {
         res.status(400).json({ success: false, error: '请提供 Telegram ID' });
         return;
@@ -109,6 +111,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         });
 
       if (insertError) {
+        console.error('Insert error:', insertError);
         res.status(500).json({ success: false, error: '保存验证码失败' });
         return;
       }
@@ -130,8 +133,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     // Verify login code
-    if (path === '/admin/auth/verify-code' && req.method === 'POST') {
-      const { telegramId, code } = req.body;
+    if (path === '/admin/auth/verify-code') {
+      const { telegramId, code } = req.body || {};
       if (!telegramId || !code) {
         res.status(400).json({ success: false, error: '请提供 Telegram ID 和验证码' });
         return;
@@ -170,7 +173,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       await supabase.from('login_codes').update({ used: true }).eq('id', loginCode.id);
 
-      // Check if admin exists
       let { data: admin } = await supabase
         .from('admins')
         .select('*')
@@ -193,7 +195,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
       }
 
-      // Generate simple token
       const token = Buffer.from(`${chatId}:${Date.now()}:${JWT_SECRET}`).toString('base64');
 
       res.json({
@@ -212,7 +213,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     // Get current user
-    if (path === '/admin/auth/me' && req.method === 'GET') {
+    if (path === '/admin/auth/me') {
       const authHeader = req.headers.authorization;
       if (!authHeader || !authHeader.startsWith('Bearer ')) {
         res.status(401).json({ success: false, error: '未授权' });
@@ -252,7 +253,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     // Get groups
-    if (path === '/admin/groups' && req.method === 'GET') {
+    if (path === '/admin/groups') {
       const supabase = getSupabase();
       const { data: groups, error } = await supabase
         .from('groups')
@@ -269,7 +270,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     // Get dashboard stats
-    if (path === '/admin/dashboard' && req.method === 'GET') {
+    if (path === '/admin/dashboard') {
       const supabase = getSupabase();
       
       const [groupsResult, usersResult, adminsResult] = await Promise.all([
