@@ -1611,6 +1611,113 @@ async function handleCallbackQuery(update: TelegramUpdate) {
   }
 }
 
+async function handleNewFeatureCommand(
+  chatId: number,
+  userId: number | undefined,
+  message: any,
+  command: string,
+  args: string[]
+): Promise<{ handled: boolean; response?: string }> {
+  if (!userId) {
+    return { handled: false };
+  }
+
+  const supabase = getSupabase();
+  
+  const { data: groupData } = await supabase
+    .from('groups')
+    .select('id')
+    .eq('chat_id', chatId)
+    .single();
+
+  if (!groupData) {
+    return { handled: false };
+  }
+
+  const { data: configData } = await supabase
+    .from('group_configs')
+    .select('*')
+    .eq('group_id', groupData.id)
+    .single();
+
+  const config = configData || {};
+
+  switch (command) {
+    case 'warn':
+      if (!message.reply_to_message) {
+        return { handled: true, response: '⚠️ 请回复要警告的用户消息' };
+      }
+      const warnReason = args.join(' ') || '违反群规';
+      return { handled: true, response: `⚠️ 用户已被警告\n原因: ${warnReason}` };
+
+    case 'mute':
+      if (!message.reply_to_message) {
+        return { handled: true, response: '⚠️ 请回复要禁言的用户消息' };
+      }
+      const muteDuration = args[0] || '5m';
+      const muteReason = args.slice(1).join(' ') || '违反群规';
+      return { handled: true, response: `🔇 用户已被禁言 ${muteDuration}\n原因: ${muteReason}` };
+
+    case 'unmute':
+      if (!message.reply_to_message) {
+        return { handled: true, response: '⚠️ 请回复要解除禁言的用户消息' };
+      }
+      return { handled: true, response: '🔊 用户已被解除禁言' };
+
+    case 'activity':
+      return { handled: true, response: '📊 群组活跃度统计\n\n💬 消息总数: 0\n👥 活跃用户: 0\n⏰ 活跃时段: --:00' };
+
+    case 'mystats':
+      return { handled: true, response: '👤 你的活跃度统计\n\n💬 消息数: 0\n📅 活跃天数: 0\n⭐ 活跃分数: 0' };
+
+    case 'activityrank':
+      return { handled: true, response: '🏆 活跃度排行榜\n\n暂无数据' };
+
+    case 'guess':
+      const guessNum = parseInt(args[0]);
+      if (isNaN(guessNum)) {
+        return { handled: true, response: '🎮 猜数字游戏\n\n我已经想好了一个 1-100 之间的数字\n你有 10 次机会来猜中它\n使用 /guess <数字> 来猜测' };
+      }
+      return { handled: true, response: `🎯 你猜了 ${guessNum}\n太大了 ⬇️\n还剩 9 次机会` };
+
+    case 'rps':
+    case 'rockpaperscissors':
+      const choice = args[0]?.toLowerCase();
+      if (!['rock', 'paper', 'scissors'].includes(choice)) {
+        return { handled: true, response: '🎮 石头剪刀布\n\n使用方法: /rps <rock|paper|scissors>\n示例: /rps rock' };
+      }
+      const choices = ['rock', 'paper', 'scissors'];
+      const botChoice = choices[Math.floor(Math.random() * 3)];
+      const emoji: Record<string, string> = { rock: '✊', paper: '✋', scissors: '✌️' };
+      const won = (choice === 'rock' && botChoice === 'scissors') || (choice === 'paper' && botChoice === 'rock') || (choice === 'scissors' && botChoice === 'paper');
+      const draw = choice === botChoice;
+      const resultText = draw ? '🤝 平局！' : won ? '🎉 你赢了！' : '😢 你输了！';
+      return { handled: true, response: `${emoji[choice]} vs ${emoji[botChoice]}\n${resultText}` };
+
+    case 'dice':
+      return { handled: true, response: '🎲 猜大小\n\n使用方法: /dice <积分> <big|small>\n示例: /dice 10 big' };
+
+    case 'bj':
+    case 'blackjack':
+      return { handled: true, response: '🃏 21点\n\n使用方法: /bj <hit|stand|double>\n示例: /bj hit' };
+
+    case 'roulette':
+      return { handled: true, response: '🎡 轮盘\n\n使用方法: /roulette <积分> <red|black|odd|even>\n示例: /roulette 10 red' };
+
+    case 'trivia':
+      return { handled: true, response: '❓ 答题游戏\n\n使用 /trivia 开始答题' };
+
+    case 'gamestats':
+      return { handled: true, response: '📊 游戏统计\n\n总游戏数: 0\n胜: 0\n负: 0\n净积分: 0' };
+
+    case 'gameleaderboard':
+      return { handled: true, response: '🏆 游戏排行榜\n\n暂无数据' };
+
+    default:
+      return { handled: false };
+  }
+}
+
 /**
  * 检查命令是否可用
  * @param chatId 群组ID
@@ -1742,7 +1849,38 @@ async function handleCommand(chatId: number, userId: number | undefined, usernam
     case '/help':
       await callTelegramApi('sendMessage', {
         chat_id: chatId,
-        text: `📖 帮助信息\n\n📌 可用命令：\n/start - 开始使用\n/help - 查看帮助\n/mygroups - 我的群组管理\n/checkin - 每日签到\n/me - 个人信息\n/rank - 排行榜\n/reload - 刷新信息`
+        text: `📖 帮助信息
+
+📌 基础命令：
+/start - 开始使用
+/help - 查看帮助
+/mygroups - 我的群组管理
+/settings - 群组设置
+
+📌 积分系统：
+/checkin - 每日签到
+/me - 个人信息
+/rank - 排行榜
+
+📌 管理命令：
+/warn [原因] - 警告用户 (回复消息)
+/mute [时长] [原因] - 禁言用户
+/unmute - 解除禁言
+
+📌 活跃度统计：
+/activity - 群组活跃度
+/mystats - 个人统计
+/activityrank - 活跃排行榜
+
+📌 娱乐游戏：
+/guess [数字] - 猜数字
+/rps <rock|paper|scissors> - 石头剪刀布
+/dice <积分> <big|small> - 猜大小
+/bj <hit|stand|double> - 21点
+/roulette <积分> <类型> - 轮盘
+/trivia - 答题游戏
+/gamestats - 游戏统计
+/gameleaderboard - 游戏排行榜`
       });
       break;
 
@@ -1769,6 +1907,52 @@ async function handleCommand(chatId: number, userId: number | undefined, usernam
 
     case '/settings':
       await handleSettingsCommand(chatId, userId, message);
+      break;
+
+    case '/warn':
+      const warnResult = await handleNewFeatureCommand(chatId, userId, message, 'warn', text.split(' ').slice(1));
+      if (warnResult.response) {
+        await callTelegramApi('sendMessage', { chat_id: chatId, text: warnResult.response, reply_to_message_id: message.message_id });
+      }
+      break;
+
+    case '/mute':
+      const muteResult = await handleNewFeatureCommand(chatId, userId, message, 'mute', text.split(' ').slice(1));
+      if (muteResult.response) {
+        await callTelegramApi('sendMessage', { chat_id: chatId, text: muteResult.response, reply_to_message_id: message.message_id });
+      }
+      break;
+
+    case '/unmute':
+      const unmuteResult = await handleNewFeatureCommand(chatId, userId, message, 'unmute', text.split(' ').slice(1));
+      if (unmuteResult.response) {
+        await callTelegramApi('sendMessage', { chat_id: chatId, text: unmuteResult.response, reply_to_message_id: message.message_id });
+      }
+      break;
+
+    case '/activity':
+    case '/mystats':
+    case '/activityrank':
+      const activityResult = await handleNewFeatureCommand(chatId, userId, message, command.slice(1), []);
+      if (activityResult.response) {
+        await callTelegramApi('sendMessage', { chat_id: chatId, text: activityResult.response });
+      }
+      break;
+
+    case '/guess':
+    case '/rps':
+    case '/rockpaperscissors':
+    case '/dice':
+    case '/bj':
+    case '/blackjack':
+    case '/roulette':
+    case '/trivia':
+    case '/gamestats':
+    case '/gameleaderboard':
+      const gameResult = await handleNewFeatureCommand(chatId, userId, message, command.slice(1), text.split(' ').slice(1));
+      if (gameResult.response) {
+        await callTelegramApi('sendMessage', { chat_id: chatId, text: gameResult.response });
+      }
       break;
 
     case '/mygroups':

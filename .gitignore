@@ -25,6 +25,9 @@ yarn-error.log*
 .env.development.local
 .env.test.local
 .env.production.local
+**/.env
+**/vercel.env
+**/.env.local
 
 # Vercel
 .vercel
@@ -53,3 +56,5 @@ logs/
 # Test files
 TEST_SUITE_SUMMARY.json
 tsc_errors.txt
+
+.vercel

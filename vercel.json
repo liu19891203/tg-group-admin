@@ -11,10 +11,14 @@
   "crons": [
     {
       "path": "/api/cron/scheduled-messages",
-      "schedule": "*/5 * * * *"
+      "schedule": "0 0 * * *"
     }
   ],
   "rewrites": [
+    {
+      "source": "/api/:path*",
+      "destination": "/api"
+    },
     {
       "source": "/assets/(.*)",
       "destination": "/frontend/dist/assets/$1"

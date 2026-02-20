@@ -709,3 +709,168 @@ export interface PendingDeleteMessage {
   reason?: string;
   created_at: string;
 }
+
+export interface UserWarning {
+  id: string;
+  telegram_id: number;
+  group_id?: string;
+  chat_id: number;
+  reason: string;
+  warned_by: number;
+  warn_count: number;
+  is_active: boolean;
+  expires_at?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface UserMute {
+  id: string;
+  telegram_id: number;
+  group_id?: string;
+  chat_id: number;
+  muted_by: number;
+  duration: number;
+  reason?: string;
+  mute_type: 'manual' | 'auto' | 'progressive';
+  unmuted_at?: string;
+  unmuted_by?: number;
+  is_active: boolean;
+  expires_at: string;
+  created_at: string;
+}
+
+export interface ActivityRecord {
+  id: string;
+  telegram_id: number;
+  group_id: string;
+  activity_type: 'message' | 'media' | 'command' | 'reaction';
+  activity_date: string;
+  activity_hour?: number;
+  metadata?: Record<string, any>;
+  created_at: string;
+}
+
+export interface GameRecord {
+  id: string;
+  telegram_id: number;
+  group_id?: string;
+  user_id?: string;
+  game_type: string;
+  result: 'win' | 'lose' | 'draw';
+  points_change: number;
+  game_data?: Record<string, any>;
+  created_at: string;
+}
+
+export interface NSWFDetection {
+  id: string;
+  telegram_id?: number;
+  group_id?: string;
+  chat_id: number;
+  message_id: number;
+  file_type?: string;
+  file_id?: string;
+  is_nsfw: boolean;
+  confidence: number;
+  categories?: Record<string, number>;
+  provider?: string;
+  action_taken: string;
+  created_at: string;
+}
+
+export interface LanguageDetection {
+  id: string;
+  telegram_id?: number;
+  group_id?: string;
+  chat_id: number;
+  message_id: number;
+  message_text?: string;
+  detected_language?: string;
+  confidence: number;
+  is_allowed: boolean;
+  provider?: string;
+  action_taken: string;
+  created_at: string;
+}
+
+export interface WarnConfig {
+  enabled: boolean;
+  max_warns: number;
+  warn_expiry_hours: number;
+  punishment: 'mute' | 'kick' | 'ban';
+  mute_duration: number;
+  warn_message: string;
+  max_warn_message: string;
+  auto_reset: boolean;
+  notify_admins: boolean;
+  admin_chat_id?: number;
+}
+
+export interface MuteConfig {
+  enabled: boolean;
+  default_duration: number;
+  max_duration: number;
+  allow_custom_duration: boolean;
+  mute_message: string;
+  unmute_message: string;
+  log_mutes: boolean;
+  notify_user: boolean;
+  progressive_mute: boolean;
+  progressive_durations: number[];
+}
+
+export interface ActivityConfig {
+  enabled: boolean;
+  track_messages: boolean;
+  track_media: boolean;
+  track_commands: boolean;
+  track_reactions: boolean;
+  leaderboard_enabled: boolean;
+  leaderboard_size: number;
+  inactive_threshold_days: number;
+  stats_retention_days: number;
+}
+
+export interface EntertainmentConfig {
+  enabled: boolean;
+  points_reward: number;
+  points_cost: number;
+  cooldown_seconds: number;
+  max_games_per_day: number;
+  leaderboard_enabled: boolean;
+}
+
+export interface NSFWConfig {
+  enabled: boolean;
+  provider: 'sightengine' | 'deepai' | 'nsfwjs' | 'custom';
+  api_key?: string;
+  api_url?: string;
+  threshold: number;
+  action: 'delete' | 'warn' | 'mute' | 'kick' | 'ban';
+  warn_threshold: number;
+  mute_duration: number;
+  log_detections: boolean;
+  notify_admins: boolean;
+  admin_chat_id?: number;
+  check_photos: boolean;
+  check_videos: boolean;
+  check_documents: boolean;
+  whitelist_users: number[];
+}
+
+export interface LanguageWhitelistConfig {
+  enabled: boolean;
+  allowed_languages: string[];
+  detection_method: 'fasttext' | 'cld3' | 'google' | 'local';
+  api_key?: string;
+  api_url?: string;
+  confidence_threshold: number;
+  action: 'delete' | 'warn' | 'mute' | 'kick';
+  warn_message: string;
+  mute_duration: number;
+  max_warnings: number;
+  whitelist_users: number[];
+  whitelist_commands: boolean;
+  min_message_length: number;
+}
